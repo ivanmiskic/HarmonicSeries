@@ -39,7 +39,7 @@ void sum()
 
 	double sum = 0;
 	double last_sum = 0;			 // Sum from previouse runs
-	double goal = 20;				 // Original goal was 40
+	double goal = 40;				 // Original goal was 40
 	unsigned int start_time = 0;	 // Time from previouse runs
 	uint64_t starting_iteration = 1; // Iteration previouse runs
 
