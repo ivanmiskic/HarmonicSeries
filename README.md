@@ -55,11 +55,17 @@ make CUDA=1                       # force CUDA when nvcc is installed
 
 ### CUDA
 
-Defaults are tuned for RTX 3060-class GPUs (`4096` chunks × `156250` terms):
+Defaults are tuned for RTX 3060-class GPUs (`turbo` mode, `8192` chunks × `156250` terms):
 
 ```bash
 make CUDA=1
-./harmonic_series --backend cuda --quiet
+./harmonic_series --backend cuda --quiet --poc-report
+```
+
+Maximum throughput on this hardware (your benchmark shape):
+
+```bash
+./harmonic_series --backend cuda --threads 4096 --chunk-size 50000000 --sum-mode turbo --quiet --poc-report
 ```
 
 Custom workload (~640M terms):

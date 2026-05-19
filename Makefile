@@ -2,7 +2,7 @@ CXX ?= g++
 NVCC ?= nvcc
 
 CXXFLAGS = -O3 -std=c++17 -Wall -Wextra -pthread -Iinclude
-NVCCFLAGS = -O3 -std=c++17 -Iinclude
+NVCCFLAGS = -O3 -std=c++17 -Iinclude --extra-device-vectorization
 CUDA_HOME ?= /opt/cuda
 CUDA_LDFLAGS = -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
 

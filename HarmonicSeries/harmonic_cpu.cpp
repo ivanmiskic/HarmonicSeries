@@ -81,7 +81,7 @@ bool run_cpu(const Config &cfg, RunStats &stats)
     const size_t workers = resolve_worker_count(cfg);
     const uint64_t chunk_size = resolve_chunk_size(cfg);
     g_quiet = cfg.quiet;
-    g_sum_mode = cfg.sum_mode;
+    g_sum_mode = resolve_sum_mode(cfg);
     g_chunk_totals.assign(workers, 0.0);
     g_workers_done.store(false);
     g_start_time = time(0);
@@ -89,7 +89,7 @@ bool run_cpu(const Config &cfg, RunStats &stats)
     const auto t0 = std::chrono::steady_clock::now();
 
     std::cout << "Backend: CPU (" << workers << " threads)\n";
-    std::cout << "Chunk size: " << chunk_size << "  sum-mode: " << sum_mode_name(cfg.sum_mode) << "\n";
+    std::cout << "Chunk size: " << chunk_size << "  sum-mode: " << sum_mode_name(g_sum_mode) << "\n";
 
     std::thread progress_thread;
     if (cfg.show_progress)
@@ -110,7 +110,7 @@ bool run_cpu(const Config &cfg, RunStats &stats)
     const auto t1 = std::chrono::steady_clock::now();
     stats.elapsed_sec = std::chrono::duration<double>(t1 - t0).count();
     stats.terms_processed = workers * chunk_size;
-    stats.final_sum = merge_chunks(g_chunk_totals, cfg.sum_mode);
+    stats.final_sum = merge_chunks(g_chunk_totals, g_sum_mode);
 
     std::cout << std::fixed << std::setprecision(15)
               << "Final sum: " << stats.final_sum

@@ -21,7 +21,7 @@ inline void print_poc_scaling_report(const Config &cfg, const RunStats &stats)
 
     std::cout << "\n--- POC scaling (H_n = 40, brute-force estimate) ---\n";
     std::cout << std::fixed << std::setprecision(6);
-    std::cout << "Mode: " << sum_mode_name(cfg.sum_mode) << "\n";
+    std::cout << "Mode: " << sum_mode_name(resolve_sum_mode(cfg)) << "\n";
     std::cout << std::setprecision(3);
     std::cout << "Terms/s (this run):     " << terms_per_sec << "\n";
     std::cout << "Target n:               " << std::scientific << TARGET_N_SUM_40 << std::fixed << "\n";
@@ -29,7 +29,7 @@ inline void print_poc_scaling_report(const Config &cfg, const RunStats &stats)
               << (sec_per_gpu / 31557600.0) << " years)\n";
     std::cout << "GPUs for 1 day (ideal): " << gpus_for_one_day << " (same class as this run)\n";
     std::cout << "Cloud $ rough (@$0.35/GPU/hr): $" << (gpus_for_one_day * 24.0 * 0.35) << " / day\n";
-    std::cout << "Note: sum-40 needs full range 1..n; use --sum-mode adaptive for large n.\n";
+    std::cout << "Note: use --sum-mode turbo on CUDA for best throughput toward huge n.\n";
 }
 
 inline void validate_sum_modes(uint64_t start, uint64_t end)
@@ -38,7 +38,9 @@ inline void validate_sum_modes(uint64_t start, uint64_t end)
     sum_chunk_range(start, end, SumMode::Accurate, a);
     sum_chunk_range(start, end, SumMode::Standard, s);
     sum_chunk_range(start, end, SumMode::Fast, f);
+    double t = 0;
     sum_chunk_range(start, end, SumMode::Adaptive, ad);
+    sum_chunk_range(start, end, SumMode::Turbo, t);
 
     std::cout << std::fixed << std::setprecision(15);
     std::cout << "Validation [" << start << ".." << end << "]:\n";
@@ -46,6 +48,7 @@ inline void validate_sum_modes(uint64_t start, uint64_t end)
     std::cout << "  standard:  " << s << "  err vs accurate: " << (s - a) << "\n";
     std::cout << "  fast:      " << f << "  err vs accurate: " << (f - a) << "\n";
     std::cout << "  adaptive:  " << ad << "  err vs accurate: " << (ad - a) << "\n";
+    std::cout << "  turbo:     " << t << "  err vs accurate: " << (t - a) << "\n";
 }
 
 } // namespace harmonic

@@ -7,10 +7,12 @@ This project is a **proof-of-concept** for how extreme summation workloads map t
 | Technique | Benefit |
 |-----------|---------|
 | **Inverse recurrence** `inv *= i/(i+1)` | Removes per-term division (dominant cost in inner loop) |
+| **`--sum-mode turbo`** (CUDA default) | Split head `[1..10⁶]` + unrolled tail kernel + streams |
 | **`--sum-mode fast`** | Single Kahan accumulator per chunk (GPU-friendly) |
-| **`--sum-mode adaptive`** | Compensated for `i < 10⁶`, Kahan tail (best toward huge **n**) |
+| **`--sum-mode adaptive`** | Compensated for `i < 10⁶`, Kahan tail |
+| **8× unrolled Kahan** | Better ILP on GPU tail path |
 | **Ping-pong partial buffers** | No struct copy per term |
-| **Many CUDA chunks** | Occupancy on parallel hardware |
+| **8192 default chunks** | Higher occupancy on RTX 3060 |
 
 ## Modes (accuracy vs speed)
 

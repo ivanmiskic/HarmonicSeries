@@ -11,17 +11,16 @@
 namespace harmonic {
 
 constexpr int MAX_PARTIALS = 64;
-
-// Chunks starting above this index use single Kahan (terms are tiny; partial list rarely needed).
 constexpr uint64_t TAIL_KAHAN_THRESHOLD = 1000000ULL;
-
 constexpr double TARGET_N_SUM_40 = 1.32159290357566703e17;
+constexpr int KAHAN_UNROLL = 8;
 
 enum class SumMode : int {
-    Accurate = 0, // div each step + compensated partials (baseline)
-    Standard = 1, // inv recurrence + compensated partials
-    Fast = 2,     // inv recurrence + Kahan per chunk
-    Adaptive = 3, // compensated below threshold, Kahan at/above (best for huge n)
+    Accurate = 0,
+    Standard = 1,
+    Fast = 2,
+    Adaptive = 3,
+    Turbo = 4, // split head [1..1e6] + unrolled tail kernel (CUDA)
 };
 
 struct PartialState {
@@ -112,10 +111,39 @@ inline HARMONIC_HD double kahan_sum(const double *data, int count)
     return sum;
 }
 
-// 1/(i+1) from 1/i without division: inv *= i/(i+1)
 inline HARMONIC_HD void inv_step(uint64_t i, double &inv)
 {
     inv *= static_cast<double>(i) / static_cast<double>(i + 1U);
+}
+
+// Unrolled Kahan + recurrence (hot path for GPU tail chunks).
+inline HARMONIC_HD bool sum_chunk_kahan_turbo(uint64_t start, uint64_t end, double &out_total)
+{
+    double sum = 0.0;
+    double comp = 0.0;
+    double inv = 1.0 / static_cast<double>(start);
+    uint64_t i = start;
+
+    while (i + static_cast<uint64_t>(KAHAN_UNROLL) <= end)
+    {
+#pragma unroll
+        for (int u = 0; u < KAHAN_UNROLL; ++u)
+        {
+            kahan_add(sum, comp, inv);
+            inv_step(i, inv);
+            ++i;
+        }
+    }
+
+    for (; i <= end; ++i)
+    {
+        kahan_add(sum, comp, inv);
+        if (i < end)
+            inv_step(i, inv);
+    }
+
+    out_total = sum;
+    return true;
 }
 
 inline HARMONIC_HD bool sum_chunk_kahan(
@@ -124,25 +152,13 @@ inline HARMONIC_HD bool sum_chunk_kahan(
     bool use_recurrence,
     double &out_total)
 {
+    if (use_recurrence)
+        return sum_chunk_kahan_turbo(start, end, out_total);
+
     double sum = 0.0;
     double comp = 0.0;
-
-    if (use_recurrence)
-    {
-        double inv = 1.0 / static_cast<double>(start);
-        for (uint64_t i = start; i <= end; ++i)
-        {
-            kahan_add(sum, comp, inv);
-            if (i < end)
-                inv_step(i, inv);
-        }
-    }
-    else
-    {
-        for (uint64_t i = start; i <= end; ++i)
-            kahan_add(sum, comp, 1.0 / static_cast<double>(i));
-    }
-
+    for (uint64_t i = start; i <= end; ++i)
+        kahan_add(sum, comp, 1.0 / static_cast<double>(i));
     out_total = sum;
     return true;
 }
@@ -186,7 +202,7 @@ inline HARMONIC_HD bool sum_chunk_adaptive(
     double &out_total)
 {
     if (start >= TAIL_KAHAN_THRESHOLD)
-        return sum_chunk_kahan(start, end, true, out_total);
+        return sum_chunk_kahan_turbo(start, end, out_total);
 
     PartialState state;
     partial_clear(state);
@@ -232,11 +248,18 @@ inline HARMONIC_HD bool sum_chunk_range(
     case SumMode::Standard:
         return sum_chunk_compensated(start, end, true, out_total);
     case SumMode::Fast:
-        return sum_chunk_kahan(start, end, true, out_total);
+        return sum_chunk_kahan_turbo(start, end, out_total);
     case SumMode::Adaptive:
         return sum_chunk_adaptive(start, end, out_total);
+    case SumMode::Turbo:
+        return sum_chunk_kahan_turbo(start, end, out_total);
     }
     return false;
+}
+
+inline HARMONIC_HD void kahan_merge(double &sum, double &comp, double value)
+{
+    kahan_add(sum, comp, value);
 }
 
 inline const char *sum_mode_name(SumMode mode)
@@ -251,8 +274,15 @@ inline const char *sum_mode_name(SumMode mode)
         return "fast";
     case SumMode::Adaptive:
         return "adaptive";
+    case SumMode::Turbo:
+        return "turbo";
     }
     return "unknown";
+}
+
+inline bool uses_turbo_cuda_path(SumMode mode)
+{
+    return mode == SumMode::Turbo;
 }
 
 } // namespace harmonic

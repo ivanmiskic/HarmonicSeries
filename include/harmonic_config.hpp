@@ -25,6 +25,7 @@ struct Config {
     bool quiet = false;
     bool fast_math = false;
     bool poc_report = false;
+    bool sum_mode_explicit = false;
     harmonic::SumMode sum_mode = harmonic::SumMode::Adaptive;
     double target_sum = 40.0;
     uint64_t verify_window = 0;
@@ -32,7 +33,7 @@ struct Config {
     int cuda_device = 0;
 };
 
-constexpr size_t DEFAULT_CUDA_CHUNKS = 4096;
+constexpr size_t DEFAULT_CUDA_CHUNKS = 8192;
 constexpr uint64_t DEFAULT_CUDA_CHUNK_SIZE = 156250U;
 
 inline void print_usage(const char *prog)
@@ -48,7 +49,8 @@ inline void print_usage(const char *prog)
         << "  accurate   div + compensated partials (slowest, reference)\n"
         << "  standard   inv recurrence + compensated (no div in loop)\n"
         << "  fast       inv recurrence + Kahan per chunk\n"
-        << "  adaptive   compensated for i<1e6, Kahan above (default, best for huge n)\n\n"
+        << "  adaptive   compensated for i<1e6, Kahan above\n"
+        << "  turbo      split head + unrolled tail CUDA kernel (default on CUDA)\n\n"
         << "Options:\n"
         << "  --chunk-size N      Terms per chunk (CUDA default: " << DEFAULT_CUDA_CHUNK_SIZE << ")\n"
         << "  --threads N         Workers (CPU: HW cores, CUDA default: " << DEFAULT_CUDA_CHUNKS << ")\n"
@@ -73,6 +75,8 @@ inline bool parse_sum_mode(const std::string &value, harmonic::SumMode &mode)
         mode = harmonic::SumMode::Fast;
     else if (value == "adaptive")
         mode = harmonic::SumMode::Adaptive;
+    else if (value == "turbo")
+        mode = harmonic::SumMode::Turbo;
     else
         return false;
     return true;
@@ -137,9 +141,10 @@ inline bool parse_args(int argc, char **argv, Config &cfg)
             }
             if (!parse_sum_mode(argv[++i], cfg.sum_mode))
             {
-                std::cerr << "Unknown --sum-mode (use accurate, standard, fast, adaptive)\n";
+                std::cerr << "Unknown --sum-mode (use accurate, standard, fast, adaptive, turbo)\n";
                 return false;
             }
+            cfg.sum_mode_explicit = true;
             continue;
         }
         if (i + 1 >= argc)
@@ -218,4 +223,13 @@ inline uint64_t resolve_chunk_size(const Config &cfg)
     if (cfg.backend == Backend::Cuda)
         return DEFAULT_CUDA_CHUNK_SIZE;
     return cfg.chunk_size;
+}
+
+inline harmonic::SumMode resolve_sum_mode(const Config &cfg)
+{
+    if (cfg.sum_mode_explicit)
+        return cfg.sum_mode;
+    if (cfg.backend == Backend::Cuda)
+        return harmonic::SumMode::Turbo;
+    return harmonic::SumMode::Adaptive;
 }
