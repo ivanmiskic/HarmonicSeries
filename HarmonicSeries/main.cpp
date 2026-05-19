@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "harmonic_config.hpp"
+#include "harmonic_distributed.hpp"
 #include "harmonic_estimator.hpp"
 #include "harmonic_poc_report.hpp"
 #include "harmonic_runner.hpp"
@@ -10,8 +11,12 @@
 int main(int argc, char **argv)
 {
     Config cfg;
-    if (!parse_args(argc, argv, cfg))
+    std::vector<std::string> merge_files;
+    if (!parse_args(argc, argv, cfg, &merge_files))
         return 1;
+
+    if (!merge_files.empty())
+        return harmonic::run_merge_mode(merge_files) ? 0 : 1;
 
     if (cfg.validate_range > 0)
     {
@@ -23,6 +28,26 @@ int main(int argc, char **argv)
     {
         harmonic::run_estimate_mode(cfg);
         return 0;
+    }
+
+    if (cfg.distributed)
+    {
+        if (cfg.global_n == 0)
+        {
+            std::cerr << "Distributed mode requires --global-n N (same on all machines)\n";
+            return 1;
+        }
+        if (cfg.backend != Backend::Cuda)
+        {
+            std::cerr << "Distributed mode currently requires --backend cuda\n";
+            return 1;
+        }
+        if (cfg.out_file.empty())
+        {
+            std::cerr << "Warning: --out not set; use e.g. --out rank" << cfg.dist_rank << ".txt\n";
+        }
+        harmonic::RunStats stats;
+        return harmonic::run_distributed_cuda(cfg, stats) ? 0 : 1;
     }
 
     harmonic::RunStats stats;

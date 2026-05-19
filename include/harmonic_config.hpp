@@ -1,12 +1,17 @@
 #pragma once
 
-#include "harmonic_core.hpp"
-
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
+
+struct Config;
+bool parse_args(int argc, char **argv, Config &cfg, std::vector<std::string> *merge_files = nullptr);
+
+#include "harmonic_core.hpp"
+
 #include <cstring>
 #include <iostream>
-#include <string>
 #include <thread>
 
 enum class Backend {
@@ -31,6 +36,15 @@ struct Config {
     uint64_t verify_window = 0;
     uint64_t validate_range = 0;
     int cuda_device = 0;
+
+    // Distributed multi-machine
+    bool distributed = false;
+    int dist_rank = 0;
+    int dist_nodes = 1;
+    uint64_t global_n = 0;
+    std::string out_file;
+    std::string sync_leader_host;
+    int sync_port = 19660;
 };
 
 constexpr size_t DEFAULT_CUDA_CHUNKS = 8192;
@@ -62,6 +76,13 @@ inline void print_usage(const char *prog)
         << "  --no-progress       Disable CPU progress thread\n"
         << "  --quiet             Suppress per-chunk output\n"
         << "  --fast-math         CUDA: enable --use_fast_math (rebuild FAST_MATH=1)\n"
+        << "Distributed (multi-machine):\n"
+        << "  --distributed R:N   This machine is rank R of N (e.g. 0:2)\n"
+        << "  --global-n N        Total index n for H_n (all nodes same value)\n"
+        << "  --out FILE          Write partial result for merge step\n"
+        << "  --sync-leader HOST  IP of rank-0 machine (required on rank>0)\n"
+        << "  --sync-port PORT    TCP barrier port (default: 19660)\n"
+        << "  --merge-results F…  Merge node result files and exit\n"
         << "  --help              Show this help\n";
 }
 
@@ -82,10 +103,38 @@ inline bool parse_sum_mode(const std::string &value, harmonic::SumMode &mode)
     return true;
 }
 
-inline bool parse_args(int argc, char **argv, Config &cfg)
+inline bool parse_distributed_spec(const char *spec, int &rank, int &nodes)
+{
+    const std::string s(spec);
+    const size_t colon = s.find(':');
+    if (colon == std::string::npos)
+        return false;
+    rank = static_cast<int>(std::stoi(s.substr(0, colon)));
+    nodes = static_cast<int>(std::stoi(s.substr(colon + 1)));
+    return nodes > 0 && rank >= 0 && rank < nodes;
+}
+
+inline bool parse_args(int argc, char **argv, Config &cfg, std::vector<std::string> *merge_files)
 {
     for (int i = 1; i < argc; ++i)
     {
+        if (std::strcmp(argv[i], "--merge-results") == 0)
+        {
+            if (!merge_files)
+            {
+                std::cerr << "Internal error: merge_files output not provided\n";
+                return false;
+            }
+            merge_files->clear();
+            while (i + 1 < argc && argv[i + 1][0] != '-')
+                merge_files->emplace_back(argv[++i]);
+            if (merge_files->empty())
+            {
+                std::cerr << "--merge-results requires at least one file\n";
+                return false;
+            }
+            continue;
+        }
         if (std::strcmp(argv[i], "--help") == 0)
         {
             print_usage(argv[0]);
@@ -192,6 +241,36 @@ inline bool parse_args(int argc, char **argv, Config &cfg)
         if (std::strcmp(argv[i], "--cuda-device") == 0)
         {
             cfg.cuda_device = std::stoi(argv[++i]);
+            continue;
+        }
+        if (std::strcmp(argv[i], "--distributed") == 0)
+        {
+            if (!parse_distributed_spec(argv[++i], cfg.dist_rank, cfg.dist_nodes))
+            {
+                std::cerr << "Invalid --distributed (use R:N e.g. 0:2)\n";
+                return false;
+            }
+            cfg.distributed = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--global-n") == 0)
+        {
+            cfg.global_n = static_cast<uint64_t>(std::stoull(argv[++i]));
+            continue;
+        }
+        if (std::strcmp(argv[i], "--out") == 0)
+        {
+            cfg.out_file = argv[++i];
+            continue;
+        }
+        if (std::strcmp(argv[i], "--sync-leader") == 0)
+        {
+            cfg.sync_leader_host = argv[++i];
+            continue;
+        }
+        if (std::strcmp(argv[i], "--sync-port") == 0)
+        {
+            cfg.sync_port = std::stoi(argv[++i]);
             continue;
         }
         std::cerr << "Unknown option: " << argv[i] << "\n";

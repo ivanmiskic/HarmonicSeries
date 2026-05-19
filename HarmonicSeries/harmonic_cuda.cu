@@ -37,12 +37,12 @@ __global__ void __launch_bounds__(256, 2) harmonic_chunk_kernel(
         chunk_totals[idx] = total;
 }
 
-__global__ void harmonic_head_kernel(double *out_head, uint64_t head_end)
+__global__ void harmonic_head_range_kernel(double *out_head, uint64_t head_start, uint64_t head_end)
 {
     if (blockIdx.x != 0 || threadIdx.x != 0)
         return;
     double head_sum = 0.0;
-    sum_chunk_adaptive(1, head_end, head_sum);
+    sum_chunk_adaptive(head_start, head_end, head_sum);
     *out_head = head_sum;
 }
 
@@ -104,76 +104,74 @@ double merge_chunks_host(const std::vector<double> &chunks, SumMode mode)
     return kahan_sum(merged.cur, merged.cur_count);
 }
 
-bool run_cuda_turbo(
+bool run_cuda_turbo_range(
     const Config &cfg,
     RunStats &stats,
     int num_chunks,
-    uint64_t /*chunk_size*/,
-    uint64_t total_end)
+    uint64_t range_start,
+    uint64_t range_end)
 {
-    const uint64_t head_end = (total_end < TAIL_KAHAN_THRESHOLD) ? total_end : TAIL_KAHAN_THRESHOLD;
-    double head_sum = 0.0;
+    if (range_start > range_end)
+        return false;
 
-    const uint64_t tail_start = head_end + 1;
-    if (tail_start > total_end)
+    stats.terms_processed = range_end - range_start + 1;
+
+    const uint64_t head_lo = range_start;
+    const uint64_t head_hi = (range_end < TAIL_KAHAN_THRESHOLD) ? range_end : TAIL_KAHAN_THRESHOLD;
+    const uint64_t tail_lo = (range_start > TAIL_KAHAN_THRESHOLD) ? range_start : (TAIL_KAHAN_THRESHOLD + 1U);
+    const uint64_t tail_hi = range_end;
+
+    const bool do_head = head_lo <= head_hi;
+    const bool do_tail = tail_lo <= tail_hi && tail_lo <= range_end;
+
+    double final_sum = 0.0;
+    double final_comp = 0.0;
+
+    if (do_head)
     {
         double *d_head = nullptr;
         check_cuda(cudaMalloc(&d_head, sizeof(double)), "cudaMalloc head");
-        harmonic_head_kernel<<<1, 1>>>(d_head, head_end);
-        check_cuda(cudaDeviceSynchronize(), "head only");
+        harmonic_head_range_kernel<<<1, 1>>>(d_head, head_lo, head_hi);
+        check_cuda(cudaDeviceSynchronize(), "head kernel");
+        double head_sum = 0.0;
         check_cuda(cudaMemcpy(&head_sum, d_head, sizeof(double), cudaMemcpyDeviceToHost), "head memcpy");
         cudaFree(d_head);
-        stats.final_sum = head_sum;
-        stats.terms_processed = total_end;
-        return true;
+        kahan_add(final_sum, final_comp, head_sum);
+        if (!cfg.quiet)
+            std::cout << "head [" << head_lo << ".." << head_hi << "]: " << head_sum << "\n";
     }
 
-    const uint64_t tail_terms = total_end - tail_start + 1;
-    const uint64_t tail_chunk_size = (tail_terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
+    if (do_tail)
+    {
+        const uint64_t tail_terms = tail_hi - tail_lo + 1;
+        const uint64_t tail_chunk_size = (tail_terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
 
-    double *d_totals = nullptr;
-    double *d_head = nullptr;
-    check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc totals");
-    check_cuda(cudaMalloc(&d_head, sizeof(double)), "cudaMalloc head");
+        double *d_totals = nullptr;
+        check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc totals");
 
-    cudaStream_t stream_head{};
-    cudaStream_t stream_tail{};
-    check_cuda(cudaStreamCreate(&stream_head), "cudaStreamCreate head");
-    check_cuda(cudaStreamCreate(&stream_tail), "cudaStreamCreate tail");
+        constexpr int threads_per_block = 256;
+        const int blocks = (num_chunks + threads_per_block - 1) / threads_per_block;
+        harmonic_tail_kernel<<<blocks, threads_per_block>>>(
+            tail_lo, tail_chunk_size, tail_hi, num_chunks, d_totals);
+        check_cuda(cudaGetLastError(), "tail kernel");
+        check_cuda(cudaDeviceSynchronize(), "tail sync");
 
-    harmonic_head_kernel<<<1, 1, 0, stream_head>>>(d_head, head_end);
+        std::vector<double> h_totals(static_cast<size_t>(num_chunks));
+        check_cuda(cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double),
+                        cudaMemcpyDeviceToHost), "tail memcpy");
+        cudaFree(d_totals);
 
-    constexpr int threads_per_block = 256;
-    const int blocks = (num_chunks + threads_per_block - 1) / threads_per_block;
-    harmonic_tail_kernel<<<blocks, threads_per_block, 0, stream_tail>>>(
-        tail_start, tail_chunk_size, total_end, num_chunks, d_totals);
+        for (int i = 0; i < num_chunks; ++i)
+            if (!cfg.quiet)
+                std::cout << "tail chunk " << i << ": " << h_totals[static_cast<size_t>(i)] << std::endl;
 
-    check_cuda(cudaStreamSynchronize(stream_head), "sync head stream");
-    check_cuda(cudaStreamSynchronize(stream_tail), "sync tail stream");
-    check_cuda(cudaMemcpy(&head_sum, d_head, sizeof(double), cudaMemcpyDeviceToHost), "head memcpy");
-
-    cudaStreamDestroy(stream_head);
-    cudaStreamDestroy(stream_tail);
-
-    std::vector<double> h_totals(static_cast<size_t>(num_chunks));
-    check_cuda(
-        cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double), cudaMemcpyDeviceToHost),
-        "cudaMemcpy totals");
-    cudaFree(d_totals);
-    cudaFree(d_head);
-
-    for (int i = 0; i < num_chunks; ++i)
+        const double tail_total = merge_chunks_host(h_totals, SumMode::Turbo);
+        kahan_add(final_sum, final_comp, tail_total);
         if (!cfg.quiet)
-            std::cout << "tail chunk " << i << ": " << h_totals[static_cast<size_t>(i)] << std::endl;
-
-    const double tail_total = merge_chunks_host(h_totals, SumMode::Turbo);
-    double final_sum = 0.0;
-    double final_comp = 0.0;
-    kahan_add(final_sum, final_comp, head_sum);
-    kahan_add(final_sum, final_comp, tail_total);
+            std::cout << "tail [" << tail_lo << ".." << tail_hi << "]: " << tail_total << "\n";
+    }
 
     stats.final_sum = final_sum;
-    stats.terms_processed = total_end;
     return true;
 }
 
@@ -183,6 +181,63 @@ bool cuda_is_available()
 {
     int count = 0;
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
+}
+
+bool run_cuda_index_range(const Config &cfg, RunStats &stats, uint64_t range_start, uint64_t range_end)
+{
+    int device_count = 0;
+    check_cuda(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount");
+    if (device_count == 0)
+        return false;
+    check_cuda(cudaSetDevice(cfg.cuda_device), "cudaSetDevice");
+
+    cudaDeviceProp prop{};
+    check_cuda(cudaGetDeviceProperties(&prop, cfg.cuda_device), "cudaGetDeviceProperties");
+    stats.gpu_name = prop.name;
+
+    const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
+    const SumMode mode = resolve_sum_mode(cfg);
+
+    std::cout << "CUDA range [" << range_start << " .. " << range_end << "]"
+              << "  device: " << prop.name
+              << "  chunks: " << num_chunks
+              << "  mode: " << sum_mode_name(mode) << "\n";
+
+    if (uses_turbo_cuda_path(mode))
+        return run_cuda_turbo_range(cfg, stats, num_chunks, range_start, range_end);
+
+    const uint64_t terms = range_end - range_start + 1;
+    const uint64_t chunk_size = (terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
+    const int sum_mode_int = static_cast<int>(mode);
+
+    double *d_totals = nullptr;
+    int *d_errors = nullptr;
+    check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc");
+    check_cuda(cudaMalloc(&d_errors, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMalloc err");
+    check_cuda(cudaMemset(d_errors, 0, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMemset");
+
+    constexpr int tpb = 256;
+    const int blocks = (num_chunks + tpb - 1) / tpb;
+
+    harmonic_chunk_kernel<<<blocks, tpb>>>(chunk_size, num_chunks, sum_mode_int, d_totals, d_errors);
+    check_cuda(cudaDeviceSynchronize(), "chunk sync");
+
+    std::vector<double> h_totals(static_cast<size_t>(num_chunks));
+    std::vector<int> h_errors(static_cast<size_t>(num_chunks));
+    check_cuda(cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double), cudaMemcpyDeviceToHost),
+        "memcpy");
+    check_cuda(cudaMemcpy(h_errors.data(), d_errors, static_cast<size_t>(num_chunks) * sizeof(int), cudaMemcpyDeviceToHost),
+        "memcpy err");
+    cudaFree(d_totals);
+    cudaFree(d_errors);
+
+    for (int i = 0; i < num_chunks; ++i)
+        if (h_errors[static_cast<size_t>(i)] != 0)
+            return false;
+
+    stats.final_sum = merge_chunks_host(h_totals, mode);
+    stats.terms_processed = terms;
+    return true;
 }
 
 bool run_cuda(const Config &cfg, RunStats &stats)
@@ -202,17 +257,12 @@ bool run_cuda(const Config &cfg, RunStats &stats)
 
     check_cuda(cudaSetDevice(cfg.cuda_device), "cudaSetDevice");
 
-    cudaDeviceProp prop{};
-    check_cuda(cudaGetDeviceProperties(&prop, cfg.cuda_device), "cudaGetDeviceProperties");
-
     const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
     const uint64_t chunk_size = resolve_chunk_size(cfg);
     const uint64_t total_end = static_cast<uint64_t>(num_chunks) * chunk_size;
     const SumMode mode = resolve_sum_mode(cfg);
-    const int sum_mode_int = static_cast<int>(mode);
 
     std::cout << "Backend: CUDA\n";
-    std::cout << "Device: " << prop.name << " (SM " << prop.major << "." << prop.minor << ")\n";
     std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size
               << "  sum-mode: " << sum_mode_name(mode);
     if (uses_turbo_cuda_path(mode))
@@ -221,50 +271,8 @@ bool run_cuda(const Config &cfg, RunStats &stats)
 
     const auto t0 = std::chrono::steady_clock::now();
 
-    if (uses_turbo_cuda_path(mode))
-    {
-        if (!run_cuda_turbo(cfg, stats, num_chunks, chunk_size, total_end))
-            return false;
-    }
-    else
-    {
-        double *d_totals = nullptr;
-        int *d_errors = nullptr;
-        check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc totals");
-        check_cuda(cudaMalloc(&d_errors, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMalloc errors");
-        check_cuda(cudaMemset(d_errors, 0, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMemset errors");
-
-        constexpr int threads_per_block = 256;
-        const int blocks = (num_chunks + threads_per_block - 1) / threads_per_block;
-
-        harmonic_chunk_kernel<<<blocks, threads_per_block>>>(
-            chunk_size, num_chunks, sum_mode_int, d_totals, d_errors);
-        check_cuda(cudaGetLastError(), "harmonic_chunk_kernel launch");
-        check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
-
-        std::vector<double> h_totals(static_cast<size_t>(num_chunks));
-        std::vector<int> h_errors(static_cast<size_t>(num_chunks));
-        check_cuda(cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double),
-                        cudaMemcpyDeviceToHost), "cudaMemcpy totals");
-        check_cuda(cudaMemcpy(h_errors.data(), d_errors, static_cast<size_t>(num_chunks) * sizeof(int),
-                        cudaMemcpyDeviceToHost), "cudaMemcpy errors");
-        cudaFree(d_totals);
-        cudaFree(d_errors);
-
-        for (int i = 0; i < num_chunks; ++i)
-        {
-            if (h_errors[static_cast<size_t>(i)] != 0)
-            {
-                std::cerr << "CUDA chunk " << i << " overflowed partial buffer\n";
-                return false;
-            }
-            if (!cfg.quiet)
-                std::cout << "chunk " << i << ": " << h_totals[static_cast<size_t>(i)] << std::endl;
-        }
-
-        stats.final_sum = merge_chunks_host(h_totals, mode);
-        stats.terms_processed = total_end;
-    }
+    if (!run_cuda_index_range(cfg, stats, 1, total_end))
+        return false;
 
     const auto t1 = std::chrono::steady_clock::now();
     stats.elapsed_sec = std::chrono::duration<double>(t1 - t0).count();

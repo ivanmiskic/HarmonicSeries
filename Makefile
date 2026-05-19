@@ -9,7 +9,8 @@ CUDA_LDFLAGS = -L$(CUDA_HOME)/lib64 -Wl,-rpath,$(CUDA_HOME)/lib64
 TARGET = harmonic_series
 CPU_SRC = HarmonicSeries/main.cpp \
           HarmonicSeries/harmonic_cpu.cpp \
-          HarmonicSeries/harmonic_estimator.cpp
+          HarmonicSeries/harmonic_estimator.cpp \
+          HarmonicSeries/harmonic_distributed.cpp
 
 .PHONY: all clean run run-cuda estimate help
 

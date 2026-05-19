@@ -109,6 +109,10 @@ Open `HarmonicSeries.sln` and build `Release|x64`. Linux `Makefile` is the maint
 
 See `docs/nasa-poc-throughput.md` for NASA/space POC notes and mode selection.
 
+### Two machines (RTX 3060 + RTX 5070)
+
+See `docs/distributed-two-machines.md` and `scripts/distributed_run.sh`.
+
 ## Project layout
 
 - `HarmonicSeries/main.cpp` — entry point
