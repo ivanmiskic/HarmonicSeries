@@ -1,5 +1,7 @@
 #pragma once
 
+#include "harmonic_core.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,12 +24,14 @@ struct Config {
     bool show_progress = true;
     bool quiet = false;
     bool fast_math = false;
+    bool poc_report = false;
+    harmonic::SumMode sum_mode = harmonic::SumMode::Adaptive;
     double target_sum = 40.0;
     uint64_t verify_window = 0;
+    uint64_t validate_range = 0;
     int cuda_device = 0;
 };
 
-// Tuned for RTX 3060-class GPUs (many chunks, moderate chunk size).
 constexpr size_t DEFAULT_CUDA_CHUNKS = 4096;
 constexpr uint64_t DEFAULT_CUDA_CHUNK_SIZE = 156250U;
 
@@ -38,18 +42,40 @@ inline void print_usage(const char *prog)
         << "Usage: " << prog << " [options]\n\n"
         << "Backends:\n"
         << "  --backend cpu       Multi-threaded CPU (default)\n"
-        << "  --backend cuda      One GPU thread per chunk (compensated summation)\n"
+        << "  --backend cuda      One GPU thread per chunk\n"
         << "  --backend estimate  Euler-Maclaurin n for target sum (instant)\n\n"
+        << "Sum modes (--sum-mode):\n"
+        << "  accurate   div + compensated partials (slowest, reference)\n"
+        << "  standard   inv recurrence + compensated (no div in loop)\n"
+        << "  fast       inv recurrence + Kahan per chunk\n"
+        << "  adaptive   compensated for i<1e6, Kahan above (default, best for huge n)\n\n"
         << "Options:\n"
         << "  --chunk-size N      Terms per chunk (CUDA default: " << DEFAULT_CUDA_CHUNK_SIZE << ")\n"
-        << "  --threads N         Workers (CPU default: HW cores, CUDA default: " << DEFAULT_CUDA_CHUNKS << ")\n"
+        << "  --threads N         Workers (CPU: HW cores, CUDA default: " << DEFAULT_CUDA_CHUNKS << ")\n"
         << "  --target S          Target harmonic sum for estimate mode (default: 40)\n"
-        << "  --verify-window W   After estimate, direct-sum verify n±W (0=skip)\n"
+        << "  --verify-window W   After estimate, direct-sum verify n+-W (0=skip)\n"
+        << "  --validate-range N  Compare sum modes on [1..N] and exit\n"
+        << "  --poc-report        Print GPUs/day and cost scaling for sum=40\n"
         << "  --cuda-device ID    CUDA device index (default: 0)\n"
-        << "  --no-progress       Disable periodic progress output (CPU)\n"
+        << "  --no-progress       Disable CPU progress thread\n"
         << "  --quiet             Suppress per-chunk output\n"
-        << "  --fast-math         CUDA: enable --use_fast_math (less accurate)\n"
+        << "  --fast-math         CUDA: enable --use_fast_math (rebuild FAST_MATH=1)\n"
         << "  --help              Show this help\n";
+}
+
+inline bool parse_sum_mode(const std::string &value, harmonic::SumMode &mode)
+{
+    if (value == "accurate")
+        mode = harmonic::SumMode::Accurate;
+    else if (value == "standard")
+        mode = harmonic::SumMode::Standard;
+    else if (value == "fast")
+        mode = harmonic::SumMode::Fast;
+    else if (value == "adaptive")
+        mode = harmonic::SumMode::Adaptive;
+    else
+        return false;
+    return true;
 }
 
 inline bool parse_args(int argc, char **argv, Config &cfg)
@@ -76,6 +102,11 @@ inline bool parse_args(int argc, char **argv, Config &cfg)
             cfg.fast_math = true;
             continue;
         }
+        if (std::strcmp(argv[i], "--poc-report") == 0)
+        {
+            cfg.poc_report = true;
+            continue;
+        }
         if (std::strcmp(argv[i], "--backend") == 0)
         {
             if (i + 1 >= argc)
@@ -92,7 +123,21 @@ inline bool parse_args(int argc, char **argv, Config &cfg)
                 cfg.backend = Backend::Estimate;
             else
             {
-                std::cerr << "Unknown backend: " << value << " (use cpu, cuda, estimate)\n";
+                std::cerr << "Unknown backend: " << value << "\n";
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(argv[i], "--sum-mode") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --sum-mode\n";
+                return false;
+            }
+            if (!parse_sum_mode(argv[++i], cfg.sum_mode))
+            {
+                std::cerr << "Unknown --sum-mode (use accurate, standard, fast, adaptive)\n";
                 return false;
             }
             continue;
@@ -132,6 +177,11 @@ inline bool parse_args(int argc, char **argv, Config &cfg)
         if (std::strcmp(argv[i], "--verify-window") == 0)
         {
             cfg.verify_window = static_cast<uint64_t>(std::stoull(argv[++i]));
+            continue;
+        }
+        if (std::strcmp(argv[i], "--validate-range") == 0)
+        {
+            cfg.validate_range = static_cast<uint64_t>(std::stoull(argv[++i]));
             continue;
         }
         if (std::strcmp(argv[i], "--cuda-device") == 0)

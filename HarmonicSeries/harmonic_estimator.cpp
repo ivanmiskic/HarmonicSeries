@@ -29,11 +29,11 @@ uint64_t estimate_n_for_target_sum(double target, int iterations)
     return static_cast<uint64_t>(std::llround(n));
 }
 
-bool harmonic_at_index(uint64_t n, double &out_sum)
+bool harmonic_at_index(uint64_t n, double &out_sum, SumMode mode)
 {
     if (n == 0)
         return false;
-    return sum_chunk_range(1, n, out_sum);
+    return sum_chunk_range(1, n, mode, out_sum);
 }
 
 void run_estimate_mode(const Config &cfg)
@@ -57,7 +57,7 @@ void run_estimate_mode(const Config &cfg)
     for (uint64_t n = from; n <= to; ++n)
     {
         double value = 0.0;
-        if (!harmonic_at_index(n, value))
+        if (!harmonic_at_index(n, value, SumMode::Accurate))
         {
             std::cerr << "Verification failed at n=" << n << " (partial list overflow)\n";
             return;

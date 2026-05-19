@@ -94,9 +94,14 @@ Open `HarmonicSeries.sln` and build `Release|x64`. Linux `Makefile` is the maint
 | `--verify-window W` | Direct-sum check `n±W` after estimate |
 | `--cuda-device ID` | GPU index (default: `0`) |
 | `--quiet` | Suppress per-chunk lines |
+| `--sum-mode` | `accurate` \| `standard` \| `fast` \| `adaptive` (default) |
+| `--poc-report` | Print GPUs/day estimate for sum=40 |
+| `--validate-range N` | Compare modes on `[1..N]` and exit |
 | `--no-progress` | Disable CPU progress thread |
 | `--fast-math` | CUDA fast math (requires `make FAST_MATH=1`) |
 | `--help` | Usage |
+
+See `docs/nasa-poc-throughput.md` for NASA/space POC notes and mode selection.
 
 ## Project layout
 

@@ -2,6 +2,7 @@
 
 #include "harmonic_config.hpp"
 #include "harmonic_core.hpp"
+#include "harmonic_poc_report.hpp"
 
 #include <cuda_runtime.h>
 
@@ -17,6 +18,7 @@ namespace {
 __global__ void __launch_bounds__(256, 4) harmonic_chunk_kernel(
     uint64_t chunk_size,
     int num_chunks,
+    int sum_mode_int,
     double *chunk_totals,
     int *error_flags)
 {
@@ -26,9 +28,10 @@ __global__ void __launch_bounds__(256, 4) harmonic_chunk_kernel(
 
     const uint64_t chunk_index = static_cast<uint64_t>(idx) + 1U;
     const auto range = chunk_range(chunk_index, chunk_size);
+    const SumMode mode = static_cast<SumMode>(sum_mode_int);
 
     double total = 0.0;
-    if (!sum_chunk_range(range.start, range.end, total))
+    if (!sum_chunk_range(range.start, range.end, mode, total))
     {
         error_flags[idx] = 1;
         return;
@@ -46,8 +49,17 @@ void check_cuda(cudaError_t err, const char *what)
     }
 }
 
-double merge_chunks_host(const std::vector<double> &chunks)
+double merge_chunks_host(const std::vector<double> &chunks, SumMode mode)
 {
+    if (mode == SumMode::Fast)
+    {
+        double sum = 0.0;
+        double comp = 0.0;
+        for (double v : chunks)
+            kahan_add(sum, comp, v);
+        return sum;
+    }
+
     PartialState merged;
     partial_clear(merged);
     for (double v : chunks)
@@ -90,16 +102,18 @@ bool run_cuda(const Config &cfg, RunStats &stats)
 
     const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
     const uint64_t chunk_size = resolve_chunk_size(cfg);
+    const int sum_mode_int = static_cast<int>(cfg.sum_mode);
 
     std::cout << "Backend: CUDA\n";
     std::cout << "Device: " << prop.name << " (SM " << prop.major << "." << prop.minor << ")\n";
-    std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size;
+    std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size
+              << "  sum-mode: " << sum_mode_name(cfg.sum_mode);
 #ifdef HARMONIC_FAST_MATH
     if (cfg.fast_math)
         std::cout << "  [fast-math: on]";
 #else
     if (cfg.fast_math)
-        std::cerr << "Warning: --fast-math ignored; rebuild with: make CUDA=1 FAST_MATH=1\n";
+        std::cerr << "\nWarning: --fast-math ignored; rebuild with: make CUDA=1 FAST_MATH=1\n";
 #endif
     std::cout << "\n";
 
@@ -116,6 +130,7 @@ bool run_cuda(const Config &cfg, RunStats &stats)
     harmonic_chunk_kernel<<<blocks, threads_per_block>>>(
         chunk_size,
         num_chunks,
+        sum_mode_int,
         d_totals,
         d_errors);
     check_cuda(cudaGetLastError(), "harmonic_chunk_kernel launch");
@@ -148,13 +163,16 @@ bool run_cuda(const Config &cfg, RunStats &stats)
             std::cout << "chunk " << i << ": " << h_totals[static_cast<size_t>(i)] << std::endl;
     }
 
-    stats.final_sum = merge_chunks_host(h_totals);
+    stats.final_sum = merge_chunks_host(h_totals, cfg.sum_mode);
     std::cout << std::fixed;
     std::cout.precision(15);
     std::cout << "Final sum: " << stats.final_sum
               << "   sec: " << stats.elapsed_sec
               << "   terms/s: " << (stats.terms_processed / stats.elapsed_sec)
               << std::endl;
+
+    if (cfg.poc_report)
+        print_poc_scaling_report(cfg, stats);
 
     return true;
 }

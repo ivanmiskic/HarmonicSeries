@@ -1,5 +1,7 @@
 #pragma once
 
+#include "harmonic_core.hpp"
+
 #include <cmath>
 #include <cstdint>
 
@@ -21,7 +23,7 @@ inline double harmonic_approx(double n)
 uint64_t estimate_n_for_target_sum(double target, int iterations = 12);
 
 // Direct compensated sum for H_n at a single index (small/medium n only).
-bool harmonic_at_index(uint64_t n, double &out_sum);
+bool harmonic_at_index(uint64_t n, double &out_sum, SumMode mode = SumMode::Accurate);
 
 void run_estimate_mode(const Config &cfg);
 

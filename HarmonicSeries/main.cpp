@@ -2,6 +2,7 @@
 
 #include "harmonic_config.hpp"
 #include "harmonic_estimator.hpp"
+#include "harmonic_poc_report.hpp"
 #include "harmonic_runner.hpp"
 
 #include <iostream>
@@ -11,6 +12,12 @@ int main(int argc, char **argv)
     Config cfg;
     if (!parse_args(argc, argv, cfg))
         return 1;
+
+    if (cfg.validate_range > 0)
+    {
+        harmonic::validate_sum_modes(1, cfg.validate_range);
+        return 0;
+    }
 
     if (cfg.backend == Backend::Estimate)
     {
