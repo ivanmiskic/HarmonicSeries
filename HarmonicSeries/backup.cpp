@@ -1,11 +1,14 @@
-//Old version in case there is unexpected bugs in new one
+// Historical experiments — not built by default.
+//
+// The original CUDA sketch below was incomplete (broken buffer swap, fixed tiny
+// iteration count). The maintained GPU path lives in:
+//   HarmonicSeries/harmonic_cuda.cu
+// with the shared compensated algorithm in:
+//   include/harmonic_core.hpp
+//
+// CPU path: HarmonicSeries/harmonic_cpu.cpp
 
-
-
-
-
-
-
+#if 0  // legacy CUDA sketch (do not compile)
 
 __global__ void sum(double *result, double *newResult)
 {
@@ -50,8 +53,7 @@ __global__ void sum(double *result, double *newResult)
 	}
 }
 
-
-
+#endif  // legacy CUDA sketch
 
 /*
 
