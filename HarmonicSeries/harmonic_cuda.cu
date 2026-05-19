@@ -2,6 +2,7 @@
 
 #include "harmonic_config.hpp"
 #include "harmonic_core.hpp"
+#include "harmonic_cuda_session.hpp"
 #include "harmonic_poc_report.hpp"
 
 #include <cuda_runtime.h>
@@ -46,7 +47,6 @@ __global__ void harmonic_head_range_kernel(double *out_head, uint64_t head_start
     *out_head = head_sum;
 }
 
-// Tail-only: [tail_start + idx*chunk_size, min(..., tail_end)]
 __global__ void __launch_bounds__(256, 2) harmonic_tail_kernel(
     uint64_t tail_start,
     uint64_t tail_chunk_size,
@@ -72,6 +72,18 @@ __global__ void __launch_bounds__(256, 2) harmonic_tail_kernel(
     double total = 0.0;
     sum_chunk_kahan_turbo(start, end, total);
     chunk_totals[idx] = total;
+}
+
+// Kahan-merge chunk partials on device; one scalar D2H instead of num_chunks doubles.
+__global__ void harmonic_kahan_reduce_kernel(const double *chunk_totals, int count, double *out)
+{
+    if (blockIdx.x != 0 || threadIdx.x != 0)
+        return;
+    double sum = 0.0;
+    double comp = 0.0;
+    for (int i = 0; i < count; ++i)
+        kahan_add(sum, comp, chunk_totals[i]);
+    *out = sum;
 }
 
 void check_cuda(cudaError_t err, const char *what)
@@ -104,8 +116,19 @@ double merge_chunks_host(const std::vector<double> &chunks, SumMode mode)
     return kahan_sum(merged.cur, merged.cur_count);
 }
 
-bool run_cuda_turbo_range(
+double device_reduce_chunks(CudaSession &session, int active_chunks)
+{
+    harmonic_kahan_reduce_kernel<<<1, 1>>>(session.d_totals, active_chunks, session.d_reduced);
+    check_cuda(cudaGetLastError(), "kahan reduce");
+    check_cuda(cudaDeviceSynchronize(), "kahan reduce sync");
+    double out = 0.0;
+    check_cuda(cudaMemcpy(&out, session.d_reduced, sizeof(double), cudaMemcpyDeviceToHost), "reduce memcpy");
+    return out;
+}
+
+bool run_cuda_turbo_range_session(
     const Config &cfg,
+    CudaSession &session,
     RunStats &stats,
     int num_chunks,
     uint64_t range_start,
@@ -129,13 +152,11 @@ bool run_cuda_turbo_range(
 
     if (do_head)
     {
-        double *d_head = nullptr;
-        check_cuda(cudaMalloc(&d_head, sizeof(double)), "cudaMalloc head");
-        harmonic_head_range_kernel<<<1, 1>>>(d_head, head_lo, head_hi);
-        check_cuda(cudaDeviceSynchronize(), "head kernel");
+        harmonic_head_range_kernel<<<1, 1>>>(session.d_head, head_lo, head_hi);
+        check_cuda(cudaGetLastError(), "head kernel");
+        check_cuda(cudaDeviceSynchronize(), "head sync");
         double head_sum = 0.0;
-        check_cuda(cudaMemcpy(&head_sum, d_head, sizeof(double), cudaMemcpyDeviceToHost), "head memcpy");
-        cudaFree(d_head);
+        check_cuda(cudaMemcpy(&head_sum, session.d_head, sizeof(double), cudaMemcpyDeviceToHost), "head memcpy");
         kahan_add(final_sum, final_comp, head_sum);
         if (!cfg.quiet)
             std::cout << "head [" << head_lo << ".." << head_hi << "]: " << head_sum << "\n";
@@ -144,34 +165,70 @@ bool run_cuda_turbo_range(
     if (do_tail)
     {
         const uint64_t tail_terms = tail_hi - tail_lo + 1;
-        const uint64_t tail_chunk_size = (tail_terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
-
-        double *d_totals = nullptr;
-        check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc totals");
+        const uint64_t tail_chunk_size =
+            (tail_terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
 
         constexpr int threads_per_block = 256;
         const int blocks = (num_chunks + threads_per_block - 1) / threads_per_block;
         harmonic_tail_kernel<<<blocks, threads_per_block>>>(
-            tail_lo, tail_chunk_size, tail_hi, num_chunks, d_totals);
+            tail_lo, tail_chunk_size, tail_hi, num_chunks, session.d_totals);
         check_cuda(cudaGetLastError(), "tail kernel");
         check_cuda(cudaDeviceSynchronize(), "tail sync");
 
-        std::vector<double> h_totals(static_cast<size_t>(num_chunks));
-        check_cuda(cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double),
-                        cudaMemcpyDeviceToHost), "tail memcpy");
-        cudaFree(d_totals);
-
-        for (int i = 0; i < num_chunks; ++i)
-            if (!cfg.quiet)
-                std::cout << "tail chunk " << i << ": " << h_totals[static_cast<size_t>(i)] << std::endl;
-
-        const double tail_total = merge_chunks_host(h_totals, SumMode::Turbo);
+        const double tail_total = device_reduce_chunks(session, num_chunks);
         kahan_add(final_sum, final_comp, tail_total);
         if (!cfg.quiet)
             std::cout << "tail [" << tail_lo << ".." << tail_hi << "]: " << tail_total << "\n";
     }
 
     stats.final_sum = final_sum;
+    return true;
+}
+
+bool run_cuda_chunk_range_session(
+    const Config &cfg,
+    CudaSession &session,
+    RunStats &stats,
+    int num_chunks,
+    uint64_t range_start,
+    uint64_t range_end,
+    SumMode mode)
+{
+    const uint64_t terms = range_end - range_start + 1;
+    const uint64_t chunk_size = (terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
+    const int sum_mode_int = static_cast<int>(mode);
+
+    check_cuda(cudaMemset(session.d_errors, 0, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMemset err");
+
+    constexpr int tpb = 256;
+    const int blocks = (num_chunks + tpb - 1) / tpb;
+
+    harmonic_chunk_kernel<<<blocks, tpb>>>(chunk_size, num_chunks, sum_mode_int, session.d_totals, session.d_errors);
+    check_cuda(cudaDeviceSynchronize(), "chunk sync");
+
+    std::vector<int> h_errors(static_cast<size_t>(num_chunks));
+    check_cuda(cudaMemcpy(h_errors.data(), session.d_errors, static_cast<size_t>(num_chunks) * sizeof(int),
+                    cudaMemcpyDeviceToHost),
+        "memcpy err");
+
+    for (int i = 0; i < num_chunks; ++i)
+        if (h_errors[static_cast<size_t>(i)] != 0)
+            return false;
+
+    if (mode == SumMode::Fast)
+    {
+        stats.final_sum = device_reduce_chunks(session, num_chunks);
+    }
+    else
+    {
+        std::vector<double> h_totals(static_cast<size_t>(num_chunks));
+        check_cuda(cudaMemcpy(h_totals.data(), session.d_totals, static_cast<size_t>(num_chunks) * sizeof(double),
+                        cudaMemcpyDeviceToHost),
+            "memcpy totals");
+        stats.final_sum = merge_chunks_host(h_totals, mode);
+    }
+
+    stats.terms_processed = terms;
     return true;
 }
 
@@ -198,6 +255,67 @@ bool cuda_init_device(const Config &cfg, std::string &gpu_name)
     return true;
 }
 
+bool cuda_session_init(CudaSession &session, const Config &cfg, std::string &gpu_name)
+{
+    if (session.ready)
+        cuda_session_fini(session);
+
+    if (!cuda_init_device(cfg, gpu_name))
+        return false;
+
+    session.num_chunks = static_cast<int>(resolve_worker_count(cfg));
+    session.cuda_device = cfg.cuda_device;
+
+    check_cuda(cudaMalloc(&session.d_head, sizeof(double)), "cudaMalloc head");
+    check_cuda(cudaMalloc(&session.d_totals, static_cast<size_t>(session.num_chunks) * sizeof(double)),
+        "cudaMalloc totals");
+    check_cuda(cudaMalloc(&session.d_reduced, sizeof(double)), "cudaMalloc reduced");
+    check_cuda(cudaMalloc(&session.d_errors, static_cast<size_t>(session.num_chunks) * sizeof(int)),
+        "cudaMalloc err");
+    session.ready = true;
+    return true;
+}
+
+void cuda_session_fini(CudaSession &session)
+{
+    if (session.d_head)
+        cudaFree(session.d_head);
+    if (session.d_totals)
+        cudaFree(session.d_totals);
+    if (session.d_reduced)
+        cudaFree(session.d_reduced);
+    if (session.d_errors)
+        cudaFree(session.d_errors);
+    session = CudaSession{};
+}
+
+bool cuda_session_run_range(
+    CudaSession &session,
+    const Config &cfg,
+    RunStats &stats,
+    uint64_t range_start,
+    uint64_t range_end,
+    bool verbose)
+{
+    if (!session.ready || session.num_chunks != static_cast<int>(resolve_worker_count(cfg)))
+        return false;
+
+    check_cuda(cudaSetDevice(session.cuda_device), "cudaSetDevice");
+
+    const SumMode mode = resolve_sum_mode(cfg);
+
+    if (verbose)
+        std::cout << "CUDA range [" << range_start << " .. " << range_end << "]"
+                  << "  chunks: " << session.num_chunks
+                  << "  mode: " << sum_mode_name(mode) << "\n";
+
+    if (uses_turbo_cuda_path(mode))
+        return run_cuda_turbo_range_session(cfg, session, stats, session.num_chunks, range_start, range_end);
+
+    return run_cuda_chunk_range_session(
+        cfg, session, stats, session.num_chunks, range_start, range_end, mode);
+}
+
 bool run_cuda_index_range(
     const Config &cfg,
     RunStats &stats,
@@ -205,53 +323,16 @@ bool run_cuda_index_range(
     uint64_t range_end,
     bool verbose)
 {
-    if (!cuda_init_device(cfg, stats.gpu_name))
+    CudaSession session;
+    if (!cuda_session_init(session, cfg, stats.gpu_name))
         return false;
 
-    const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
-    const SumMode mode = resolve_sum_mode(cfg);
-
     if (verbose)
-        std::cout << "CUDA range [" << range_start << " .. " << range_end << "]"
-                  << "  device: " << stats.gpu_name
-                  << "  chunks: " << num_chunks
-                  << "  mode: " << sum_mode_name(mode) << "\n";
+        std::cout << "  device: " << stats.gpu_name << "\n";
 
-    if (uses_turbo_cuda_path(mode))
-        return run_cuda_turbo_range(cfg, stats, num_chunks, range_start, range_end);
-
-    const uint64_t terms = range_end - range_start + 1;
-    const uint64_t chunk_size = (terms + static_cast<uint64_t>(num_chunks) - 1U) / static_cast<uint64_t>(num_chunks);
-    const int sum_mode_int = static_cast<int>(mode);
-
-    double *d_totals = nullptr;
-    int *d_errors = nullptr;
-    check_cuda(cudaMalloc(&d_totals, static_cast<size_t>(num_chunks) * sizeof(double)), "cudaMalloc");
-    check_cuda(cudaMalloc(&d_errors, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMalloc err");
-    check_cuda(cudaMemset(d_errors, 0, static_cast<size_t>(num_chunks) * sizeof(int)), "cudaMemset");
-
-    constexpr int tpb = 256;
-    const int blocks = (num_chunks + tpb - 1) / tpb;
-
-    harmonic_chunk_kernel<<<blocks, tpb>>>(chunk_size, num_chunks, sum_mode_int, d_totals, d_errors);
-    check_cuda(cudaDeviceSynchronize(), "chunk sync");
-
-    std::vector<double> h_totals(static_cast<size_t>(num_chunks));
-    std::vector<int> h_errors(static_cast<size_t>(num_chunks));
-    check_cuda(cudaMemcpy(h_totals.data(), d_totals, static_cast<size_t>(num_chunks) * sizeof(double), cudaMemcpyDeviceToHost),
-        "memcpy");
-    check_cuda(cudaMemcpy(h_errors.data(), d_errors, static_cast<size_t>(num_chunks) * sizeof(int), cudaMemcpyDeviceToHost),
-        "memcpy err");
-    cudaFree(d_totals);
-    cudaFree(d_errors);
-
-    for (int i = 0; i < num_chunks; ++i)
-        if (h_errors[static_cast<size_t>(i)] != 0)
-            return false;
-
-    stats.final_sum = merge_chunks_host(h_totals, mode);
-    stats.terms_processed = terms;
-    return true;
+    const bool ok = cuda_session_run_range(session, cfg, stats, range_start, range_end, verbose);
+    cuda_session_fini(session);
+    return ok;
 }
 
 bool run_cuda(const Config &cfg, RunStats &stats)
@@ -269,8 +350,6 @@ bool run_cuda(const Config &cfg, RunStats &stats)
         return false;
     }
 
-    check_cuda(cudaSetDevice(cfg.cuda_device), "cudaSetDevice");
-
     const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
     const uint64_t chunk_size = resolve_chunk_size(cfg);
     const uint64_t total_end = static_cast<uint64_t>(num_chunks) * chunk_size;
@@ -280,7 +359,7 @@ bool run_cuda(const Config &cfg, RunStats &stats)
     std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size
               << "  sum-mode: " << sum_mode_name(mode);
     if (uses_turbo_cuda_path(mode))
-        std::cout << "  [split-head + tail kernel]";
+        std::cout << "  [split-head + tail kernel + device reduce]";
     std::cout << "\n";
 
     const auto t0 = std::chrono::steady_clock::now();

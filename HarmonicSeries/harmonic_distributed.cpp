@@ -1,6 +1,7 @@
 #include "harmonic_distributed.hpp"
 
 #include "harmonic_core.hpp"
+#include "harmonic_cuda_session.hpp"
 #include "harmonic_poc_report.hpp"
 
 #include <arpa/inet.h>
@@ -216,19 +217,24 @@ bool run_dynamic_worker_loop(
     uint64_t &units_done,
     std::string &gpu_name)
 {
-    if (!cuda_init_device(cfg, gpu_name))
+    CudaSession session;
+    if (!cuda_session_init(session, cfg, gpu_name))
         return false;
 
     WorkUnitRange range;
     while (request_work_unit(work_fd, range))
     {
         RunStats chunk{};
-        if (!run_cuda_index_range(cfg, chunk, range.start, range.end, false))
+        if (!cuda_session_run_range(session, cfg, chunk, range.start, range.end, false))
+        {
+            cuda_session_fini(session);
             return false;
+        }
         kahan_add(acc_sum, acc_comp, chunk.final_sum);
         terms_done += chunk.terms_processed;
         ++units_done;
     }
+    cuda_session_fini(session);
     return true;
 }
 
@@ -242,7 +248,8 @@ bool run_dynamic_leader_loop(
     uint64_t &units_done,
     std::string &gpu_name)
 {
-    if (!cuda_init_device(cfg, gpu_name))
+    CudaSession session;
+    if (!cuda_session_init(session, cfg, gpu_name))
         return false;
 
     std::atomic<bool> stop{false};
@@ -254,11 +261,12 @@ bool run_dynamic_leader_loop(
     while (queue.assign_unit(range))
     {
         RunStats chunk{};
-        if (!run_cuda_index_range(cfg, chunk, range.start, range.end, false))
+        if (!cuda_session_run_range(session, cfg, chunk, range.start, range.end, false))
         {
             stop.store(true);
             if (server_thread.joinable())
                 server_thread.join();
+            cuda_session_fini(session);
             return false;
         }
         kahan_add(acc_sum, acc_comp, chunk.final_sum);
@@ -269,6 +277,7 @@ bool run_dynamic_leader_loop(
     stop.store(true);
     if (server_thread.joinable())
         server_thread.join();
+    cuda_session_fini(session);
     return true;
 }
 

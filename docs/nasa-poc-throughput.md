@@ -48,7 +48,7 @@ Even at **~10¹⁰ terms/s** (10× today’s best GPU run), one GPU needs **~400
 
 1. **Estimator** — answers “where” in milliseconds (`--backend estimate`)
 2. **Hybrid** — direct sum for small **n**, asymptotic + verification for large **n**
-3. **Distributed** — partition `1..n` across many nodes (not in this repo yet)
+3. **Distributed** — dynamic work queue + persistent CUDA session per node (`--distributed`)
 
 ## Next engineering steps (real speedups)
 

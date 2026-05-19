@@ -85,7 +85,7 @@ inline void print_usage(const char *prog)
         << "  --sync-leader HOST  IP of rank-0 machine (required on rank>0)\n"
         << "  --sync-port PORT    TCP barrier port (default: 19660)\n"
         << "  --dist-schedule S   static (50/50 split) or dynamic (default, load-balanced)\n"
-        << "  --work-unit N       Dynamic: index span per work unit (default: 50M)\n"
+        << "  --work-unit N       Dynamic: index span per work unit (default: 200M)\n"
         << "  --merge-results F…  Merge node result files and exit\n"
         << "  --help              Show this help\n";
 }
@@ -340,5 +340,5 @@ inline uint64_t resolve_work_unit(const Config &cfg)
 {
     if (cfg.work_unit > 0)
         return cfg.work_unit;
-    return 50000000U;
+    return 200000000U;
 }

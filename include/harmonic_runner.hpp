@@ -1,6 +1,7 @@
 #pragma once
 
 #include "harmonic_config.hpp"
+#include "harmonic_cuda_session.hpp"
 
 #include <cstdint>
 #include <string>

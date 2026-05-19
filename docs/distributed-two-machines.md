@@ -8,7 +8,9 @@ Each machine sums **disjoint index ranges** of the harmonic series. A TCP barrie
 
 Static 50/50 split (`--dist-schedule static`) makes the **fast GPU wait** for the slow one at merge time.
 
-**Dynamic scheduling** splits `1..global-n` into many **work units** (default 50M terms each). Both machines pull units from a shared queue on the leader until none remain. The **RTX 5070 keeps working** until the pool is empty — no idle time waiting for the 3060.
+**Dynamic scheduling** splits `1..global-n` into **work units** (default 200M terms each). Both machines pull units from a shared queue on the leader until none remain. The **RTX 5070 keeps working** until the pool is empty — no idle time waiting for the 3060.
+
+Each unit reuses **persistent GPU buffers** (no per-unit `cudaMalloc`) and **device-side Kahan reduction** (one scalar D2H per unit, not thousands of chunk values).
 
 Wall time ≈ `total_terms / (speed_3060 + speed_5070)` instead of `total_terms / speed_3060`.
 
@@ -27,7 +29,7 @@ export LD_LIBRARY_PATH="/opt/cuda/lib64"
 ./harmonic_series --backend cuda --distributed 0:2 \
   --global-n 204800000000 \
   --dist-schedule dynamic \
-  --work-unit 50000000 \
+  --work-unit 200000000 \
   --threads 4096 --sum-mode turbo --quiet \
   --out rank0.txt \
   --sync-port 19660
@@ -44,7 +46,7 @@ export LD_LIBRARY_PATH="/opt/cuda/lib64"
 ./harmonic_series --backend cuda --distributed 1:2 \
   --global-n 204800000000 \
   --dist-schedule dynamic \
-  --work-unit 50000000 \
+  --work-unit 200000000 \
   --threads 4096 --sum-mode turbo --quiet \
   --out rank1.txt \
   --sync-leader 192.168.1.10 \
