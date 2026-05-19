@@ -21,11 +21,22 @@ struct NodeResult {
     uint64_t range_start = 1;
     uint64_t range_end = 0;
     uint64_t terms_processed = 0;
+    uint64_t work_units_done = 0;
     double partial_sum = 0.0;
     double elapsed_sec = 0.0;
+    std::string schedule;
     std::string hostname;
     std::string gpu_name;
 };
+
+struct WorkUnitRange {
+    int64_t unit_id = -1;
+    uint64_t start = 0;
+    uint64_t end = 0;
+};
+
+uint64_t total_work_units(uint64_t global_n, uint64_t work_unit);
+bool work_unit_to_range(int64_t unit_id, uint64_t work_unit, uint64_t global_n, WorkUnitRange &out);
 
 // Equal term-count partition of [1 .. global_n] across nodes.
 IndexRange partition_range(int rank, int nodes, uint64_t global_n);

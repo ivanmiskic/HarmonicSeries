@@ -17,7 +17,13 @@ struct RunStats {
 
 bool run_cpu(const Config &cfg, RunStats &stats);
 bool run_cuda(const Config &cfg, RunStats &stats);
-bool run_cuda_index_range(const Config &cfg, RunStats &stats, uint64_t range_start, uint64_t range_end);
+bool run_cuda_index_range(
+    const Config &cfg,
+    RunStats &stats,
+    uint64_t range_start,
+    uint64_t range_end,
+    bool verbose = true);
+bool cuda_init_device(const Config &cfg, std::string &gpu_name);
 bool cuda_is_available();
 
 } // namespace harmonic

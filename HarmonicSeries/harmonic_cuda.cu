@@ -183,25 +183,39 @@ bool cuda_is_available()
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
-bool run_cuda_index_range(const Config &cfg, RunStats &stats, uint64_t range_start, uint64_t range_end)
+bool cuda_init_device(const Config &cfg, std::string &gpu_name)
 {
     int device_count = 0;
     check_cuda(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount");
     if (device_count == 0)
         return false;
+    if (cfg.cuda_device < 0 || cfg.cuda_device >= device_count)
+        return false;
     check_cuda(cudaSetDevice(cfg.cuda_device), "cudaSetDevice");
-
     cudaDeviceProp prop{};
     check_cuda(cudaGetDeviceProperties(&prop, cfg.cuda_device), "cudaGetDeviceProperties");
-    stats.gpu_name = prop.name;
+    gpu_name = prop.name;
+    return true;
+}
+
+bool run_cuda_index_range(
+    const Config &cfg,
+    RunStats &stats,
+    uint64_t range_start,
+    uint64_t range_end,
+    bool verbose)
+{
+    if (!cuda_init_device(cfg, stats.gpu_name))
+        return false;
 
     const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
     const SumMode mode = resolve_sum_mode(cfg);
 
-    std::cout << "CUDA range [" << range_start << " .. " << range_end << "]"
-              << "  device: " << prop.name
-              << "  chunks: " << num_chunks
-              << "  mode: " << sum_mode_name(mode) << "\n";
+    if (verbose)
+        std::cout << "CUDA range [" << range_start << " .. " << range_end << "]"
+                  << "  device: " << stats.gpu_name
+                  << "  chunks: " << num_chunks
+                  << "  mode: " << sum_mode_name(mode) << "\n";
 
     if (uses_turbo_cuda_path(mode))
         return run_cuda_turbo_range(cfg, stats, num_chunks, range_start, range_end);

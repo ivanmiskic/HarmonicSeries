@@ -45,6 +45,8 @@ struct Config {
     std::string out_file;
     std::string sync_leader_host;
     int sync_port = 19660;
+    bool dist_dynamic = true;
+    uint64_t work_unit = 0;
 };
 
 constexpr size_t DEFAULT_CUDA_CHUNKS = 8192;
@@ -82,6 +84,8 @@ inline void print_usage(const char *prog)
         << "  --out FILE          Write partial result for merge step\n"
         << "  --sync-leader HOST  IP of rank-0 machine (required on rank>0)\n"
         << "  --sync-port PORT    TCP barrier port (default: 19660)\n"
+        << "  --dist-schedule S   static (50/50 split) or dynamic (default, load-balanced)\n"
+        << "  --work-unit N       Dynamic: index span per work unit (default: 50M)\n"
         << "  --merge-results F…  Merge node result files and exit\n"
         << "  --help              Show this help\n";
 }
@@ -273,6 +277,25 @@ inline bool parse_args(int argc, char **argv, Config &cfg, std::vector<std::stri
             cfg.sync_port = std::stoi(argv[++i]);
             continue;
         }
+        if (std::strcmp(argv[i], "--dist-schedule") == 0)
+        {
+            const std::string v = argv[++i];
+            if (v == "dynamic")
+                cfg.dist_dynamic = true;
+            else if (v == "static")
+                cfg.dist_dynamic = false;
+            else
+            {
+                std::cerr << "Unknown --dist-schedule (use static or dynamic)\n";
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(argv[i], "--work-unit") == 0)
+        {
+            cfg.work_unit = static_cast<uint64_t>(std::stoull(argv[++i]));
+            continue;
+        }
         std::cerr << "Unknown option: " << argv[i] << "\n";
         print_usage(argv[0]);
         return false;
@@ -311,4 +334,11 @@ inline harmonic::SumMode resolve_sum_mode(const Config &cfg)
     if (cfg.backend == Backend::Cuda)
         return harmonic::SumMode::Turbo;
     return harmonic::SumMode::Adaptive;
+}
+
+inline uint64_t resolve_work_unit(const Config &cfg)
+{
+    if (cfg.work_unit > 0)
+        return cfg.work_unit;
+    return 50000000U;
 }
