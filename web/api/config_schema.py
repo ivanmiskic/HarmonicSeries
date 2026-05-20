@@ -16,6 +16,13 @@ DEFAULT_RUN_CONFIG = {
     "show_progress": False,
     "progress_json": True,
     "no_progress": True,
+    "distributed": False,
+    "dist_rank": 0,
+    "dist_nodes": 2,
+    "sync_leader": "",
+    "sync_port": 19660,
+    "dist_schedule": "dynamic",
+    "work_unit": 200_000_000,
 }
 
 AUTO_VALUES = {
@@ -68,11 +75,19 @@ CONFIG_SCHEMA = {
     "quiet": {"type": "boolean", "default": True, "label": "Quiet output"},
     "poc_report": {"type": "boolean", "default": False, "label": "POC scaling report"},
     "progress_json": {"type": "boolean", "default": True, "label": "JSON progress on stderr"},
+    "distributed": {"type": "boolean", "default": False, "label": "Distributed run (this node)"},
+    "dist_rank": {"type": "integer", "default": 0, "label": "Rank", "min": 0},
+    "dist_nodes": {"type": "integer", "default": 2, "label": "Node count", "min": 2},
+    "sync_leader": {"type": "string", "default": "", "label": "Sync leader IP (workers only)"},
+    "sync_port": {"type": "integer", "default": 19660, "label": "Sync port", "min": 1},
+    "dist_schedule": {"type": "enum", "options": ["dynamic", "static"], "default": "dynamic", "label": "Schedule"},
+    "work_unit": {"type": "integer", "default": 200000000, "label": "Work unit (dynamic)", "min": 1},
 }
 
 PRESETS = {
     "smoke": {"name": "Smoke (CPU)", "config": {"backend": "cpu", "chunk_size": 1_000_000, "threads": 4, "global_n": 4_000_000, "sum_mode": "adaptive", "quiet": True, "poc_report": False}},
     "cuda_bench": {"name": "CUDA benchmark", "config": {"backend": "cuda", "threads": 4096, "chunk_size": 156_250, "sum_mode": "turbo", "quiet": True, "poc_report": True}},
     "max_throughput": {"name": "Max throughput", "config": {"backend": "cuda", "threads": 4096, "chunk_size": 50_000_000, "sum_mode": "turbo", "quiet": True, "poc_report": True}},
+    "dist_leader": {"name": "Distributed leader (rank 0)", "config": {"backend": "cuda", "distributed": True, "dist_rank": 0, "dist_nodes": 2, "global_n": 204800000000, "threads": 4096, "chunk_size": 50_000_000, "sum_mode": "turbo", "dist_schedule": "dynamic", "work_unit": 200000000, "sync_port": 19660, "quiet": True}},
     "estimate_40": {"name": "Estimate sum=40", "config": {"backend": "estimate", "target_sum": 40.0}},
 }

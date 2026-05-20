@@ -1,0 +1,42 @@
+host:
+  name: primary-dev-host
+  measured_at: "2026-05-20"
+  gpu: NVIDIA GeForce RTX 3060
+  cpu_cores: 16
+  notes: >-
+    Reference throughput captured on the development machine (Arch Linux, RTX 3060).
+    Seeded automatically when the run database is empty.
+
+runs:
+  - label: CPU legacy algorithm replay
+    backend: cpu
+    sum_mode: legacy
+    device: 16-core CPU
+    terms_per_sec: 1427296877
+    terms_processed: 1600000000
+    elapsed_sec: 1.121
+    measured_at: "2026-05-19"
+    commit: "14b0183"
+    notes: Multithreaded CPU path from June 2015 commit, replayed on this host.
+
+  - label: CUDA accurate (first GPU backend)
+    backend: cuda
+    sum_mode: accurate
+    device: NVIDIA GeForce RTX 3060
+    terms_per_sec: 2313307207.54
+    terms_processed: 640000000
+    elapsed_sec: 0.277
+    measured_at: "2026-05-19"
+    commit: "390fbe8"
+    notes: Compensated summation on GPU, one thread per chunk.
+
+  - label: CUDA turbo peak
+    backend: cuda
+    sum_mode: turbo
+    device: NVIDIA GeForce RTX 3060
+    terms_per_sec: 3685212140.71
+    terms_processed: 204800000000
+    elapsed_sec: 55.57
+    measured_at: "2026-05-20"
+    commit: "e819864"
+    notes: "threads=4096 chunk-size=50000000 — peak measured throughput on this host."

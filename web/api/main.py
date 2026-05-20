@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import calculator as calc
+import reference_benchmarks as refbench
 import jobs
 from config_schema import AUTO_VALUES, CONFIG_SCHEMA, DEFAULT_RUN_CONFIG, FIELD_PRESETS, PRESETS
 from database import PresetRecord, RunRecord, get_db, init_db
@@ -79,8 +80,7 @@ def config_schema() -> dict[str, Any]:
 
 @app.get("/api/runs")
 def list_runs(limit: int = 50, db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.query(RunRecord).order_by(RunRecord.id.desc()).limit(limit).all()
-    return [_run_to_dict(r) for r in rows]
+    return refbench.list_runs_with_fallback(db, limit)
 
 
 @app.post("/api/runs")
@@ -88,6 +88,11 @@ def create_run(body: RunCreate, db: Session = Depends(get_db)) -> dict:
     config = {**DEFAULT_RUN_CONFIG, **body.config}
     if config.get("backend") not in ("cpu", "cuda", "estimate"):
         raise HTTPException(400, "Invalid backend")
+    if config.get("distributed"):
+        if config.get("backend") != "cuda":
+            raise HTTPException(400, "Distributed mode requires CUDA backend")
+        if not int(config.get("global_n") or 0):
+            raise HTTPException(400, "Distributed mode requires global_n > 0")
     record = jobs.start_run(db, config)
     return _run_to_dict(record)
 
@@ -158,15 +163,6 @@ def estimate(body: EstimateRequest) -> dict:
 
 
 
-@app.get("/api/benchmarks/progress")
-def benchmark_progress() -> dict:
-    import yaml
-    path = Path(__file__).parent / "data" / "progress_timeline.yaml"
-    if not path.exists():
-        return {"summary": {}, "milestones": []}
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {"summary": {}, "milestones": []}
-
 @app.get("/api/benchmarks/gpu-catalog")
 def gpu_catalog(db: Session = Depends(get_db)) -> dict:
     rows = db.query(RunRecord).order_by(RunRecord.id.desc()).limit(100).all()
@@ -222,14 +218,4 @@ def _catalog_with_runs(db: Session) -> dict[str, Any]:
 
 
 def _run_to_dict(record: RunRecord) -> dict:
-    stats = json.loads(record.stats_json) if record.stats_json else None
-    return {
-        "id": record.id,
-        "status": record.status,
-        "config": json.loads(record.config_json),
-        "stats": stats,
-        "log_path": record.log_path,
-        "pid": record.pid,
-        "started_at": record.started_at.isoformat() if record.started_at else None,
-        "finished_at": record.finished_at.isoformat() if record.finished_at else None,
-    }
+    return refbench.run_to_dict(record)

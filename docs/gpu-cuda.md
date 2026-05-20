@@ -2,7 +2,7 @@
 
 ## History
 
-An early CUDA experiment lived at the top of `HarmonicSeries/backup.cpp`. It was never wired into the build:
+An early CUDA experiment is preserved in **`docs/archive/backup.cpp`** (not compiled). It was never wired into the build:
 
 - pointer swap only updated a local variable (buffers never exchanged),
 - partial-sum indexing was hard-coded for the first few terms,

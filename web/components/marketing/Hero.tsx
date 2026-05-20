@@ -4,12 +4,12 @@ import { motion } from "framer-motion";
 import { PillButton } from "@/components/ui/PillButton";
 import { HarmonicSumViz } from "@/components/marketing/HarmonicSumViz";
 import { fadeUp, stagger } from "@/lib/motion";
-
-const GITHUB = "https://github.com/ivanmiskic/HarmonicSeries";
+import { GITHUB_REPO_URL } from "@/lib/github";
+import { labModeLabel } from "@/lib/lab-mode";
 
 export function Hero() {
   return (
-    <section className="relative min-h-[100dvh] flex flex-col justify-center px-6 pt-24 pb-16 max-w-6xl mx-auto overflow-hidden">
+    <section id="harmonic" className="relative min-h-[100dvh] flex flex-col justify-center px-6 pt-24 pb-16 max-w-6xl mx-auto overflow-hidden">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center w-full">
         <motion.div initial="hidden" animate="visible" variants={stagger} className="max-w-xl lg:max-w-none">
           <motion.p variants={fadeUp} className="mb-4 inline-block rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.2em] ring-1 ring-accent/30 text-accent">
@@ -28,8 +28,8 @@ export function Hero() {
           </motion.p>
           <motion.div variants={fadeUp} className="flex flex-wrap gap-3">
             <Link href="/#performance"><PillButton>Benchmarks</PillButton></Link>
-            <Link href="/dashboard"><PillButton variant="ghost">Live lab</PillButton></Link>
-            <a href={GITHUB} target="_blank" rel="noopener noreferrer">
+            <Link href="/dashboard"><PillButton variant="ghost">{labModeLabel}</PillButton></Link>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
               <PillButton variant="ghost">Open repo</PillButton>
             </a>
           </motion.div>

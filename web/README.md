@@ -1,4 +1,4 @@
-# Harmonic Series Web Dashboard
+**Repository:** [github.com/ivanmiskic/HarmonicSeries](https://github.com/ivanmiskic/HarmonicSeries)
 
 Dark glass UI for running and monitoring harmonic series benchmarks.
 
@@ -21,6 +21,8 @@ npm install && npm run dev
 ```
 
 Open http://localhost:3000 — homepage and `/dashboard` lab console.
+
+**Distributed runs:** the dashboard can start one CUDA rank on this host. Additional GPUs must run the CLI on peer machines — see [docs/distributed-two-machines.md](../docs/distributed-two-machines.md) or the **Distributed** section in the run launcher.
 
 ## Docker
 

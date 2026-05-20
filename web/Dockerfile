@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+ENV NEXT_PUBLIC_LAB_ENABLED=false
 ENV NEXT_PUBLIC_API_URL=http://127.0.0.1:8001
 RUN npm run build
 

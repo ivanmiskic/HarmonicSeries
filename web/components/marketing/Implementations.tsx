@@ -23,7 +23,7 @@ const tabs = [
   {
     id: "distributed",
     label: "Distributed",
-    desc: "Dynamic work-queue scheduling across multiple CUDA hosts. Faster nodes drain the shared unit pool without waiting on slower peers.",
+    desc: "Dynamic work-queue scheduling across multiple CUDA hosts (CLI on each machine). The Lab can launch rank 0 on this host; peer GPUs run matching commands from docs/distributed-two-machines.md.",
   },
 ];
 

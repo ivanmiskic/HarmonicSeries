@@ -1,3 +1,18 @@
+import { isLabLive } from "@/lib/lab-mode";
+import {
+  presentationEstimate,
+  presentationGpuCatalog,
+  presentationHealth,
+  presentationPresets,
+  presentationReferenceRuns,
+  presentationSchema,
+} from "@/lib/presentation-data";
+import {
+  compareGpusClient,
+  computeScalingClient,
+  scalingForGpuClient,
+} from "@/lib/scaling-client";
+
 const API =
   typeof window !== "undefined"
     ? ""
@@ -10,6 +25,7 @@ export type RunRecord = {
   stats: Record<string, unknown> | null;
   started_at: string | null;
   finished_at: string | null;
+  source?: "local" | "reference";
 };
 
 export type Health = {
@@ -18,6 +34,23 @@ export type Health = {
   gpus: { id: number; name: string; memory_mb: number }[];
   cpu_cores?: number;
   auto_values?: Record<string, { threads: number; chunk_size: number }>;
+};
+
+
+export type SavedPreset = {
+  id: number;
+  name: string;
+  config: Record<string, unknown>;
+};
+
+export type EstimateResult = {
+  backend: string;
+  target_sum: number;
+  estimated_n: number;
+  approximate_h_n: number;
+  error_vs_target: number;
+  target_n_sum_40: number;
+  verify?: Record<string, unknown>;
 };
 
 export type GpuEntry = {
@@ -29,33 +62,6 @@ export type GpuEntry = {
   gpu_name?: string;
 };
 
-
-export type ProgressMilestone = {
-  id: string;
-  era: string;
-  date: string;
-  title: string;
-  subtitle: string;
-  backend: string;
-  gpu_name: string;
-  sum_mode: string;
-  terms_per_sec: number;
-  years_to_sum_40: number;
-  highlight?: boolean;
-  notes?: string;
-};
-
-export type ProgressSummary = {
-  gpu: string;
-  baseline_terms_per_sec: number;
-  peak_terms_per_sec: number;
-  speedup_vs_2015: number;
-  years_2015: number;
-  years_2026_peak: number;
-  years_improvement_factor: number;
-  hiatus_years: number;
-  measured_at: string;
-};
 
 export type GpuCatalog = {
   gpus: GpuEntry[];
@@ -86,50 +92,118 @@ export type ScalingResult = {
 };
 
 export async function fetchHealth(): Promise<Health> {
+  if (!isLabLive) return presentationHealth;
   const r = await fetch(`${API}/api/health`);
   if (!r.ok) throw new Error("Health check failed");
   return r.json();
 }
 
 export async function fetchRuns(): Promise<RunRecord[]> {
+  if (!isLabLive) return presentationReferenceRuns;
   const r = await fetch(`${API}/api/runs`);
   if (!r.ok) throw new Error("Failed to fetch runs");
   return r.json();
 }
 
 export async function createRun(config: Record<string, unknown>): Promise<RunRecord> {
+  if (!isLabLive) {
+    throw new Error("Presentation mode — runs are disabled. Clone the repo and enable the lab API locally.");
+  }
   const r = await fetch(`${API}/api/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ config }),
   });
-  if (!r.ok) throw new Error("Failed to start run");
+  if (!r.ok) {
+    const body = await r.text();
+    let msg = "Failed to start run";
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      if (parsed.detail) msg = parsed.detail;
+    } catch {
+      if (body) msg = body;
+    }
+    throw new Error(msg);
+  }
   return r.json();
 }
 
 export async function cancelRun(id: number): Promise<void> {
+  if (!isLabLive) return;
   await fetch(`${API}/api/runs/${id}/cancel`, { method: "POST" });
 }
 
-export async function fetchSchema() {
-  const r = await fetch(`${API}/api/config/schema`);
+
+export async function fetchPresets(): Promise<SavedPreset[]> {
+  if (!isLabLive) return presentationPresets;
+  const r = await fetch(`${API}/api/presets`);
+  if (!r.ok) throw new Error("Failed to load saved presets");
   return r.json();
 }
 
+export async function savePreset(name: string, config: Record<string, unknown>): Promise<SavedPreset> {
+  if (!isLabLive) {
+    throw new Error("Presentation mode — saving presets is disabled.");
+  }
+  const r = await fetch(`${API}/api/presets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, config }),
+  });
+  if (!r.ok) throw new Error("Failed to save preset");
+  return r.json();
+}
 
-export async function fetchProgressTimeline(): Promise<{ summary: ProgressSummary; milestones: ProgressMilestone[] }> {
-  const r = await fetch(`${API}/api/benchmarks/progress`);
-  if (!r.ok) throw new Error("Failed to load progress timeline");
+export async function fetchEstimate(targetSum = 40, verifyWindow = 0): Promise<EstimateResult> {
+  if (!isLabLive) return presentationEstimate(targetSum, verifyWindow);
+  const r = await fetch(`${API}/api/estimate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_sum: targetSum, verify_window: verifyWindow }),
+  });
+  if (!r.ok) {
+    const body = await r.text();
+    let msg = "Estimate failed — is harmonic_series built?";
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      if (parsed.detail) msg = parsed.detail;
+    } catch {
+      if (body) msg = body;
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export async function fetchSchema() {
+  if (!isLabLive) return presentationSchema;
+  const r = await fetch(`${API}/api/config/schema`);
+  if (!r.ok) throw new Error("Failed to load config schema");
   return r.json();
 }
 
 export async function fetchGpuCatalog(): Promise<GpuCatalog> {
+  if (!isLabLive) return presentationGpuCatalog;
   const r = await fetch(`${API}/api/benchmarks/gpu-catalog`);
   if (!r.ok) throw new Error("Failed to load GPU catalog");
   return r.json();
 }
 
 export async function computeScaling(body: Record<string, unknown>): Promise<ScalingResult> {
+  if (!isLabLive) {
+    const gpuId = body.gpu_id as string | undefined;
+    const gpuCount = Number(body.gpu_count ?? 1);
+    const provider = body.provider as string | undefined;
+    if (body.terms_per_sec != null) {
+      return computeScalingClient(
+        Number(body.terms_per_sec),
+        gpuCount,
+        Number(body.hourly_rate ?? 0.35),
+      );
+    }
+    if (gpuId) return scalingForGpuClient(presentationGpuCatalog, gpuId, gpuCount, provider);
+    return { valid: false, error: "gpu_id or terms_per_sec required" };
+  }
   const r = await fetch(`${API}/api/calculator/scaling`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -140,6 +214,7 @@ export async function computeScaling(body: Record<string, unknown>): Promise<Sca
 }
 
 export async function compareGpus(gpuCount: number, provider: string): Promise<{ comparisons: ScalingResult[] }> {
+  if (!isLabLive) return compareGpusClient(presentationGpuCatalog, gpuCount, provider);
   const r = await fetch(`${API}/api/calculator/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

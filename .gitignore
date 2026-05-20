@@ -111,6 +111,7 @@ Temporary Items
 
 web/node_modules/
 web/.next/
+web/out/
 web/.env.local
 web/api/.venv/
 web/api/harmonic.db

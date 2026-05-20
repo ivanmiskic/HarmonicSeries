@@ -4,13 +4,20 @@ import { RunLauncher } from "@/components/dashboard/RunLauncher";
 import { LiveMonitor } from "@/components/dashboard/LiveMonitor";
 import { RunHistory } from "@/components/dashboard/RunHistory";
 import { ClusterCalculator } from "@/components/marketing/ClusterCalculator";
+import { PresentationBanner } from "@/components/ui/PresentationBanner";
+import { isLabLive } from "@/lib/lab-mode";
 
 export default function DashboardPage() {
   const [activeRun, setActiveRun] = useState<number | null>(null);
   return (
     <div className="px-6 pt-28 pb-16 max-w-7xl mx-auto">
       <h1 className="text-3xl font-bold mb-2">Mission control</h1>
-      <p className="text-muted mb-10">Launch, monitor, and benchmark harmonic series runs on this machine.</p>
+      <p className="text-muted mb-10">
+        {isLabLive
+          ? "Launch, monitor, and benchmark harmonic series runs on this machine."
+          : "Interactive preview of the lab — reference benchmarks and scaling work offline; execution is disabled in production."}
+      </p>
+      {!isLabLive && <PresentationBanner />}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4"><RunLauncher onStarted={setActiveRun} /></div>
         <div className="lg:col-span-5"><LiveMonitor runId={activeRun} /></div>

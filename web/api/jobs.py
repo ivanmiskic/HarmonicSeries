@@ -54,6 +54,22 @@ def config_to_argv(config: dict[str, Any]) -> list[str]:
         argv.extend(["--cuda-device", str(int(config["cuda_device"]))])
     if config.get("global_n"):
         argv.extend(["--global-n", str(int(config["global_n"]))])
+    if config.get("distributed"):
+        rank = int(config.get("dist_rank", 0))
+        nodes = int(config.get("dist_nodes", 2))
+        argv.extend(["--distributed", f"{rank}:{nodes}"])
+        leader = config.get("sync_leader") or ""
+        if leader:
+            argv.extend(["--sync-leader", str(leader)])
+        if config.get("sync_port") is not None:
+            argv.extend(["--sync-port", str(int(config["sync_port"]))])
+        schedule = str(config.get("dist_schedule", "dynamic"))
+        argv.extend(["--dist-schedule", schedule])
+        if config.get("work_unit"):
+            argv.extend(["--work-unit", str(int(config["work_unit"]))])
+        out_file = config.get("out_file") or f"rank{rank}.txt"
+        argv.extend(["--out", str(out_file)])
+
     if config.get("quiet", True):
         argv.append("--quiet")
     if config.get("poc_report"):

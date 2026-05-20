@@ -40,6 +40,12 @@ class PresetRecord(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        import reference_benchmarks as refbench
+        refbench.seed_if_empty(db)
+    finally:
+        db.close()
 
 
 def get_db():

@@ -1,5 +1,7 @@
 # HarmonicSeries
 
+**Repository:** [github.com/ivanmiskic/HarmonicSeries](https://github.com/ivanmiskic/HarmonicSeries)
+
 Numerical experiment for computing large partial sums of the harmonic series:
 
 \[
@@ -8,7 +10,7 @@ H_n = \sum_{k=1}^{n}\frac{1}{k}
 
 The project uses compensated summation (partial-sum expansion + Kahan reduction) for better floating-point stability than a naive `double` loop. It supports **CPU multithreading**, **CUDA (one GPU thread per chunk)**, and an **Euler–Maclaurin estimator** for the sum-40 target index.
 
-![Result sample](https://github.com/kebapmanager/HarmonicSeries/blob/master/See%20it%20in%20action/25.png)
+![Result sample](https://github.com/ivanmiskic/HarmonicSeries/blob/master/See%20it%20in%20action/25.png)
 
 ## Why this project exists
 
@@ -32,12 +34,12 @@ So this repository is:
 | `HarmonicSeries/harmonic_cuda.cu` | CUDA backend (one thread per chunk) |
 | `HarmonicSeries/harmonic_estimator.cpp` | Euler–Maclaurin `n` for target sum |
 | `HarmonicSeries/main.cpp` | CLI and backend dispatch |
-| `HarmonicSeries/backup.cpp` | Historical CPU/CUDA experiments (not built) |
+| `HarmonicSeries/harmonic_distributed.cpp` | Multi-node CUDA (CLI + dashboard rank launcher) |
 
 See also:
 
 - `docs/project-review-and-sum40-plan.md` — review and roadmap
-- `docs/gpu-cuda.md` — CUDA design and legacy `backup.cpp` notes
+- `docs/gpu-cuda.md` — CUDA design and archived experiment notes
 - `web/README.md` — dark web dashboard (homepage + lab console)
 
 ## Web dashboard
@@ -142,7 +144,7 @@ See `docs/distributed-two-machines.md` and `scripts/distributed_run.sh`.
 ## Project layout
 
 - `HarmonicSeries/main.cpp` — entry point
-- `HarmonicSeries/backup.cpp` — archived experiments (old broken CUDA sketch)
+- `docs/archive/backup.cpp` — archived 2015 experiments (not built)
 - `HarmonicSeries.sln`, `HarmonicSeries/*.vcxproj` — Visual Studio
 - `See it in action/` — screenshots
 
@@ -150,4 +152,4 @@ See `docs/distributed-two-machines.md` and `scripts/distributed_run.sh`.
 
 The project reports stable behavior at very large iteration counts when using compensated summation.
 
-![Accuracy sample](https://github.com/kebapmanager/HarmonicSeries/blob/master/See%20it%20in%20action/Accuracy%20Sum%2029%20updated.png)
+![Accuracy sample](https://github.com/ivanmiskic/HarmonicSeries/blob/master/See%20it%20in%20action/Accuracy%20Sum%2029%20updated.png)
