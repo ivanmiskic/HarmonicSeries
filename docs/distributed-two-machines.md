@@ -12,6 +12,8 @@ Static 50/50 split (`--dist-schedule static`) makes the **fast GPU wait** for th
 
 Each unit reuses **persistent GPU buffers** (no per-unit `cudaMalloc`) and **device-side Kahan reduction** (one scalar D2H per unit, not thousands of chunk values).
 
+While the GPU sums unit *N*, a background thread **prefetches** unit *N+1* from the work queue (TCP on workers, local queue on the leader).
+
 Wall time ≈ `total_terms / (speed_3060 + speed_5070)` instead of `total_terms / speed_3060`.
 
 ## Example: 204.8B terms

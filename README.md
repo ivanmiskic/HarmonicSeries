@@ -38,6 +38,28 @@ See also:
 
 - `docs/project-review-and-sum40-plan.md` — review and roadmap
 - `docs/gpu-cuda.md` — CUDA design and legacy `backup.cpp` notes
+- `web/README.md` — dark web dashboard (homepage + lab console)
+
+## Web dashboard
+
+Local-first dark UI for running benchmarks, live monitoring, GPU/cluster cost estimates, and a project explainer homepage.
+
+```bash
+make CUDA=1
+cd web/api && python -m venv .venv && .venv/bin/pip install -r requirements.txt
+HARMONIC_BIN=../../harmonic_series .venv/bin/uvicorn main:app --port 8001 &
+cd .. && cp .env.example .env.local && npm install && npm run dev
+```
+
+Open http://localhost:3000 (homepage) and http://localhost:3000/dashboard (lab).
+
+New CLI flags for API integration:
+
+```bash
+./harmonic_series --format json --backend estimate --target 40
+./harmonic_series --list-gpus
+./harmonic_series --global-n 1000000 --backend cpu --format json --progress-json
+```
 
 ## Build and run (Linux)
 
@@ -105,6 +127,10 @@ Open `HarmonicSeries.sln` and build `Release|x64`. Linux `Makefile` is the maint
 | `--validate-range N` | Compare modes on `[1..N]` and exit |
 | `--no-progress` | Disable CPU progress thread |
 | `--fast-math` | CUDA fast math (requires `make FAST_MATH=1`) |
+| `--format json\|text` | Machine-readable JSON output |
+| `--progress-json` | NDJSON progress on stderr |
+| `--list-gpus` | List CUDA devices as JSON |
+| `--global-n N` | Bound summation to [1..N] |
 | `--help` | Usage |
 
 See `docs/nasa-poc-throughput.md` for NASA/space POC notes and mode selection.

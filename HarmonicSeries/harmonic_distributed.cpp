@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -175,6 +176,181 @@ bool request_work_unit(int fd, WorkUnitRange &out)
     return true;
 }
 
+struct WorkUnitSource {
+    virtual ~WorkUnitSource() = default;
+    virtual bool fetch(WorkUnitRange &out) = 0;
+};
+
+struct RemoteWorkSource final : WorkUnitSource {
+    explicit RemoteWorkSource(int fd) : fd_(fd) {}
+    bool fetch(WorkUnitRange &out) override { return request_work_unit(fd_, out); }
+
+private:
+    int fd_;
+};
+
+struct LocalWorkSource final : WorkUnitSource {
+    explicit LocalWorkSource(WorkQueueCoordinator &queue) : queue_(queue) {}
+    bool fetch(WorkUnitRange &out) override { return queue_.assign_unit(out); }
+
+private:
+    WorkQueueCoordinator &queue_;
+};
+
+/** Prefetch next work unit on a background thread while the GPU runs the current one. */
+class WorkUnitPrefetcher {
+public:
+    explicit WorkUnitPrefetcher(WorkUnitSource &source) : source_(source) {}
+
+    ~WorkUnitPrefetcher() { shutdown(); }
+
+    bool start()
+    {
+        if (!source_.fetch(current_))
+            return false;
+        if (current_.unit_id < 0)
+            return false;
+        has_current_ = true;
+        thread_ = std::thread(&WorkUnitPrefetcher::prefetch_loop, this);
+        return true;
+    }
+
+    void shutdown()
+    {
+        if (shutdown_done_.exchange(true))
+            return;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            stop_ = true;
+        }
+        cv_fetch_.notify_all();
+        cv_use_.notify_all();
+        if (thread_.joinable())
+            thread_.join();
+    }
+
+    bool current(WorkUnitRange &out) const
+    {
+        if (!has_current_)
+            return false;
+        out = current_;
+        return true;
+    }
+
+    // After GPU finishes current unit: wait for prefetched next. Returns false on EOF or error.
+    bool advance(WorkUnitRange &out, bool &eof)
+    {
+        eof = false;
+        if (!has_current_)
+            return false;
+
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            cv_use_.notify_one();
+        }
+
+        std::unique_lock<std::mutex> lock(mu_);
+        cv_fetch_.wait(lock, [this] { return next_ready_ || stop_ || prefetch_failed_; });
+
+        if (prefetch_failed_)
+            return false;
+
+        if (next_.unit_id < 0)
+        {
+            has_current_ = false;
+            eof = true;
+            return false;
+        }
+
+        current_ = next_;
+        next_ready_ = false;
+        cv_use_.notify_one();
+        out = current_;
+        return true;
+    }
+
+private:
+    void prefetch_loop()
+    {
+        while (true)
+        {
+            WorkUnitRange fetched{};
+            const bool ok = source_.fetch(fetched);
+
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                if (stop_)
+                    return;
+                if (!ok)
+                {
+                    prefetch_failed_ = true;
+                    next_.unit_id = -1;
+                }
+                else if (fetched.unit_id < 0)
+                {
+                    next_.unit_id = -1;
+                }
+                else
+                {
+                    next_ = fetched;
+                }
+                next_ready_ = true;
+            }
+            cv_fetch_.notify_one();
+
+            std::unique_lock<std::mutex> lock(mu_);
+            cv_use_.wait(lock, [this] { return !next_ready_ || stop_; });
+            if (stop_)
+                return;
+        }
+    }
+
+    WorkUnitSource &source_;
+    WorkUnitRange current_{};
+    WorkUnitRange next_{};
+    bool has_current_ = false;
+    bool next_ready_ = false;
+    bool prefetch_failed_ = false;
+    bool stop_ = false;
+    std::atomic<bool> shutdown_done_{false};
+    std::mutex mu_;
+    std::condition_variable cv_fetch_;
+    std::condition_variable cv_use_;
+    std::thread thread_;
+};
+
+bool run_prefetched_cuda_units(
+    const Config &cfg,
+    CudaSession &session,
+    WorkUnitPrefetcher &prefetch,
+    double &acc_sum,
+    double &acc_comp,
+    uint64_t &terms_done,
+    uint64_t &units_done)
+{
+    WorkUnitRange range;
+    if (!prefetch.current(range))
+        return true;
+
+    for (;;)
+    {
+        RunStats chunk{};
+        if (!cuda_session_run_range(session, cfg, chunk, range.start, range.end, false))
+            return false;
+        kahan_add(acc_sum, acc_comp, chunk.final_sum);
+        terms_done += chunk.terms_processed;
+        ++units_done;
+
+        bool eof = false;
+        if (!prefetch.advance(range, eof))
+        {
+            if (eof)
+                return true;
+            return false;
+        }
+    }
+}
+
 void serve_worker_loop(int client_fd, WorkQueueCoordinator &queue, std::atomic<bool> &stop)
 {
     while (!stop.load())
@@ -221,21 +397,18 @@ bool run_dynamic_worker_loop(
     if (!cuda_session_init(session, cfg, gpu_name))
         return false;
 
-    WorkUnitRange range;
-    while (request_work_unit(work_fd, range))
+    RemoteWorkSource source(work_fd);
+    WorkUnitPrefetcher prefetch(source);
+    if (!prefetch.start())
     {
-        RunStats chunk{};
-        if (!cuda_session_run_range(session, cfg, chunk, range.start, range.end, false))
-        {
-            cuda_session_fini(session);
-            return false;
-        }
-        kahan_add(acc_sum, acc_comp, chunk.final_sum);
-        terms_done += chunk.terms_processed;
-        ++units_done;
+        cuda_session_fini(session);
+        return true;
     }
+
+    const bool ok = run_prefetched_cuda_units(cfg, session, prefetch, acc_sum, acc_comp, terms_done, units_done);
+    prefetch.shutdown();
     cuda_session_fini(session);
-    return true;
+    return ok;
 }
 
 bool run_dynamic_leader_loop(
@@ -257,28 +430,18 @@ bool run_dynamic_leader_loop(
     if (worker_fd >= 0)
         server_thread = std::thread(serve_worker_loop, worker_fd, std::ref(queue), std::ref(stop));
 
-    WorkUnitRange range;
-    while (queue.assign_unit(range))
-    {
-        RunStats chunk{};
-        if (!cuda_session_run_range(session, cfg, chunk, range.start, range.end, false))
-        {
-            stop.store(true);
-            if (server_thread.joinable())
-                server_thread.join();
-            cuda_session_fini(session);
-            return false;
-        }
-        kahan_add(acc_sum, acc_comp, chunk.final_sum);
-        terms_done += chunk.terms_processed;
-        ++units_done;
-    }
+    LocalWorkSource source(queue);
+    WorkUnitPrefetcher prefetch(source);
+    bool ok = true;
+    if (prefetch.start())
+        ok = run_prefetched_cuda_units(cfg, session, prefetch, acc_sum, acc_comp, terms_done, units_done);
+    prefetch.shutdown();
 
     stop.store(true);
     if (server_thread.joinable())
         server_thread.join();
     cuda_session_fini(session);
-    return true;
+    return ok;
 }
 
 bool run_distributed_dynamic(const Config &cfg, RunStats &stats)

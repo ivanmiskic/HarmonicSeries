@@ -4,12 +4,15 @@
 #include "harmonic_core.hpp"
 #include "harmonic_cuda_session.hpp"
 #include "harmonic_poc_report.hpp"
+#include "harmonic_output.hpp"
 
 #include <cuda_runtime.h>
 
+#include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 namespace harmonic {
@@ -352,34 +355,96 @@ bool run_cuda(const Config &cfg, RunStats &stats)
 
     const int num_chunks = static_cast<int>(resolve_worker_count(cfg));
     const uint64_t chunk_size = resolve_chunk_size(cfg);
-    const uint64_t total_end = static_cast<uint64_t>(num_chunks) * chunk_size;
+    const uint64_t total_end = resolve_global_end(cfg);
     const SumMode mode = resolve_sum_mode(cfg);
+    const bool json_out = is_json_output(cfg);
 
-    std::cout << "Backend: CUDA\n";
-    std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size
-              << "  sum-mode: " << sum_mode_name(mode);
-    if (uses_turbo_cuda_path(mode))
-        std::cout << "  [split-head + tail kernel + device reduce]";
-    std::cout << "\n";
+    if (!json_out)
+    {
+        std::cout << "Backend: CUDA\n";
+        std::cout << "Range: [1 .. " << total_end << "]\n";
+        std::cout << "Chunks: " << num_chunks << "  chunk size: " << chunk_size
+                  << "  sum-mode: " << sum_mode_name(mode);
+        if (uses_turbo_cuda_path(mode))
+            std::cout << "  [split-head + tail kernel + device reduce]";
+        std::cout << "\n";
+    }
+
+    std::atomic<bool> progress_done{false};
+    std::thread progress_thread;
+    if (cfg.progress_json)
+    {
+        progress_thread = std::thread([&]() {
+            const auto t0 = std::chrono::steady_clock::now();
+            while (!progress_done.load())
+            {
+                const auto now = std::chrono::steady_clock::now();
+                const double elapsed = std::chrono::duration<double>(now - t0).count();
+                emit_progress_json(0.0, elapsed, 0, cfg.global_n > 0 ? cfg.global_n : total_end);
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+            }
+        });
+    }
 
     const auto t0 = std::chrono::steady_clock::now();
 
-    if (!run_cuda_index_range(cfg, stats, 1, total_end))
+    if (!run_cuda_index_range(cfg, stats, 1, total_end, !json_out && !cfg.quiet))
+    {
+        progress_done.store(true);
+        if (progress_thread.joinable())
+            progress_thread.join();
         return false;
+    }
 
     const auto t1 = std::chrono::steady_clock::now();
+    progress_done.store(true);
+    if (progress_thread.joinable())
+        progress_thread.join();
+
     stats.elapsed_sec = std::chrono::duration<double>(t1 - t0).count();
 
-    std::cout << std::fixed;
-    std::cout.precision(15);
-    std::cout << "Final sum: " << stats.final_sum
-              << "   sec: " << stats.elapsed_sec
-              << "   terms/s: " << (stats.terms_processed / stats.elapsed_sec)
-              << std::endl;
+    if (cfg.progress_json)
+        emit_progress_json(stats.final_sum, stats.elapsed_sec, stats.terms_processed,
+            cfg.global_n > 0 ? cfg.global_n : total_end);
 
-    if (cfg.poc_report)
-        print_poc_scaling_report(cfg, stats);
+    if (!json_out)
+    {
+        std::cout << std::fixed;
+        std::cout.precision(15);
+        std::cout << "Final sum: " << stats.final_sum
+                  << "   sec: " << stats.elapsed_sec
+                  << "   terms/s: " << (stats.terms_processed / stats.elapsed_sec)
+                  << std::endl;
 
+        if (cfg.poc_report)
+            print_poc_scaling_report(cfg, stats);
+    }
+
+    return true;
+}
+
+bool list_cuda_gpus_json()
+{
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0)
+    {
+        std::cout << "[]" << std::endl;
+        return true;
+    }
+
+    std::cout << "[";
+    for (int i = 0; i < device_count; ++i)
+    {
+        cudaDeviceProp prop{};
+        if (cudaGetDeviceProperties(&prop, i) != cudaSuccess)
+            continue;
+        if (i > 0)
+            std::cout << ",";
+        std::cout << "{\"id\":" << i
+                  << ",\"name\":\"" << json_escape(prop.name) << "\""
+                  << ",\"memory_mb\":" << (prop.totalGlobalMem / (1024 * 1024)) << "}";
+    }
+    std::cout << "]" << std::endl;
     return true;
 }
 

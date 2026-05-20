@@ -1,0 +1,73 @@
+summary:
+  gpu: NVIDIA GeForce RTX 3060
+  baseline_terms_per_sec: 1427296877
+  peak_terms_per_sec: 3685212140.71
+  speedup_vs_2015: 2.58
+  years_2015: 2.93
+  years_2026_peak: 1.14
+  years_improvement_factor: 2.57
+  hiatus_years: 10
+  measured_at: '2026-05-19'
+milestones:
+- id: 2015_cpu
+  era: 2015 — Original
+  date: '2015-06-28'
+  title: Multithreaded CPU baseline
+  subtitle: Project birth · algorithm from June 2015 commit, replayed on this machine
+  backend: cpu
+  gpu_name: 16-core CPU (2015 code)
+  sum_mode: legacy
+  terms_per_sec: 1427296877
+  terms_processed: 1600000000
+  elapsed_sec: 1.121
+  years_to_sum_40: 2.93
+  commit: 14b0183
+  highlight: false
+  notes: No GPU path — broken CUDA sketch only in backup.cpp. Division per term, no
+    inverse recurrence.
+- id: 2015_pause
+  era: 2015–2025
+  date: '2015-07-02'
+  title: Project abandoned
+  subtitle: Last commit before 10-year hiatus
+  backend: none
+  gpu_name: —
+  sum_mode: —
+  terms_per_sec: 0
+  terms_processed: 0
+  elapsed_sec: 0
+  years_to_sum_40: 0
+  commit: '2550637'
+  highlight: false
+  notes: Sum-40 goal documented but unreachable with 2015 hardware alone.
+- id: 2026_cuda_v1
+  era: 2026 — Rebirth
+  date: '2026-05-19'
+  title: First working CUDA backend
+  subtitle: RTX 3060 · compensated summation on GPU
+  backend: cuda
+  gpu_name: NVIDIA GeForce RTX 3060
+  sum_mode: accurate
+  terms_per_sec: 2313307207.54
+  terms_processed: 640000000
+  elapsed_sec: 0.277
+  years_to_sum_40: 1.81
+  commit: 390fbe8
+  highlight: false
+  notes: One thread per chunk — first time the GPU path could sustain huge-n summation.
+- id: 2026_turbo_max
+  era: 2026 — Optimized
+  date: '2026-05-20'
+  title: Turbo + persistent session (peak)
+  subtitle: RTX 3060 · measured just now on this machine
+  backend: cuda
+  gpu_name: NVIDIA GeForce RTX 3060
+  sum_mode: turbo
+  terms_per_sec: 3685212140.71
+  terms_processed: 204800000000
+  elapsed_sec: 55.57
+  years_to_sum_40: 1.14
+  commit: e819864
+  highlight: true
+  notes: Inverse recurrence, split-head turbo kernel, 4096×50M chunks. 2.58× faster
+    than 2015 CPU replay.

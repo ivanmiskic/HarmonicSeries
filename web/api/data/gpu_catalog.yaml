@@ -1,0 +1,46 @@
+gpus:
+- id: rtx_3060_measured
+  name: RTX 3060 (measured peak)
+  terms_per_sec: 3685212141
+  source: benchmark
+  notes: Peak turbo run 2026-05-19 — 3.69B terms/s on RTX 3060
+- id: rtx_5070_estimated
+  name: RTX 5070
+  terms_per_sec: 5527818211
+  source: estimate
+  notes: ~1.5× RTX 3060 measured peak
+- id: rtx_4090
+  name: RTX 4090
+  terms_per_sec: 1200000000
+  source: estimate
+- id: a100_80gb
+  name: NVIDIA A100 80GB
+  terms_per_sec: 8000000000
+  source: literature
+- id: h100_80gb
+  name: NVIDIA H100 80GB
+  terms_per_sec: 15000000000
+  source: literature
+providers:
+- id: vast_spot
+  name: Vast.ai (spot)
+  hourly_usd:
+    rtx_3060_measured: 0.15
+    rtx_5070_estimated: 0.22
+    rtx_4090: 0.35
+    a100_80gb: 1.1
+    h100_80gb: 2.2
+    default: 0.35
+- id: runpod
+  name: RunPod
+  hourly_usd:
+    rtx_3060_measured: 0.2
+    rtx_4090: 0.44
+    a100_80gb: 1.49
+    h100_80gb: 2.69
+    default: 0.44
+- id: aws_p4d
+  name: AWS p4d (on-demand)
+  hourly_usd:
+    a100_80gb: 3.5
+    default: 3.5

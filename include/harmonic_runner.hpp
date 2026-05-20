@@ -26,5 +26,6 @@ bool run_cuda_index_range(
     bool verbose = true);
 bool cuda_init_device(const Config &cfg, std::string &gpu_name);
 bool cuda_is_available();
+bool list_cuda_gpus_json();
 
 } // namespace harmonic

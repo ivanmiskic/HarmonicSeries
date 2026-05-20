@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #050508;
+  --bg-elevated: rgba(255, 255, 255, 0.03);
+  --border-hairline: rgba(255, 255, 255, 0.08);
+  --accent-primary: #6ee7b7;
+  --accent-secondary: #818cf8;
+  --text-primary: #f4f4f5;
+  --text-muted: #71717a;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100dvh;
+}
+
+.bg-atmosphere {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.bg-atmosphere::before,
+.bg-atmosphere::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.15;
+}
+
+.bg-atmosphere::before {
+  width: 40vw;
+  height: 40vw;
+  top: -10%;
+  left: -5%;
+  background: radial-gradient(circle, #6ee7b7 0%, transparent 70%);
+  animation: float 12s ease-in-out infinite;
+}
+
+.bg-atmosphere::after {
+  width: 35vw;
+  height: 35vw;
+  bottom: -5%;
+  right: -5%;
+  background: radial-gradient(circle, #818cf8 0%, transparent 70%);
+  animation: float 14s ease-in-out 3s infinite;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-16px); }
+}
+
+
+/* HarmonicSumViz — GPU-friendly animations (transform/opacity only) */
+.harmonic-grid {
+  background-image:
+    linear-gradient(rgba(110, 231, 183, 0.45) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110, 231, 183, 0.45) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.harmonic-scanline {
+  animation: harmonic-scan 5s linear infinite;
+  will-change: transform;
+}
+
+.harmonic-pulse {
+  animation: harmonic-pulse 2.4s ease-in-out infinite;
+}
+
+.harmonic-term-enter {
+  animation: harmonic-term-in 0.42s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform, opacity;
+}
+
+@keyframes harmonic-scan {
+  from { transform: translateY(0); }
+  to { transform: translateY(320px); }
+}
+
+@keyframes harmonic-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.92); }
+}
+
+@keyframes harmonic-term-in {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .harmonic-scanline,
+  .harmonic-pulse,
+  .harmonic-term-enter {
+    animation: none !important;
+  }
+}

@@ -3,6 +3,7 @@
 #include "harmonic_config.hpp"
 #include "harmonic_distributed.hpp"
 #include "harmonic_estimator.hpp"
+#include "harmonic_output.hpp"
 #include "harmonic_poc_report.hpp"
 #include "harmonic_runner.hpp"
 
@@ -14,6 +15,13 @@ int main(int argc, char **argv)
     std::vector<std::string> merge_files;
     if (!parse_args(argc, argv, cfg, &merge_files))
         return 1;
+
+    if (cfg.list_gpus)
+    {
+        if (!harmonic::list_cuda_gpus_json())
+            return 1;
+        return 0;
+    }
 
     if (!merge_files.empty())
         return harmonic::run_merge_mode(merge_files) ? 0 : 1;
@@ -47,7 +55,10 @@ int main(int argc, char **argv)
             std::cerr << "Warning: --out not set; use e.g. --out rank" << cfg.dist_rank << ".txt\n";
         }
         harmonic::RunStats stats;
-        return harmonic::run_distributed_cuda(cfg, stats) ? 0 : 1;
+        const bool ok = harmonic::run_distributed_cuda(cfg, stats);
+        if (ok && harmonic::is_json_output(cfg))
+            harmonic::print_run_result_json(cfg, stats, cfg.poc_report);
+        return ok ? 0 : 1;
     }
 
     harmonic::RunStats stats;
@@ -66,6 +77,9 @@ int main(int argc, char **argv)
     {
         ok = harmonic::run_cpu(cfg, stats);
     }
+
+    if (ok && harmonic::is_json_output(cfg))
+        harmonic::print_run_result_json(cfg, stats, cfg.poc_report);
 
     return ok ? 0 : 1;
 }

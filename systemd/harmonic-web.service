@@ -1,0 +1,15 @@
+[Unit]
+Description=Harmonic Series Web API
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/kveikur/www/harmonic-series.loc/web/api
+Environment=HARMONIC_BIN=/home/kveikur/www/harmonic-series.loc/harmonic_series
+Environment=CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ExecStart=/home/kveikur/www/harmonic-series.loc/web/api/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

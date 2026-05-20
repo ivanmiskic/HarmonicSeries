@@ -2,10 +2,12 @@
 
 #include "harmonic_config.hpp"
 #include "harmonic_core.hpp"
+#include "harmonic_output.hpp"
 
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 
 namespace harmonic {
 
@@ -40,6 +42,23 @@ void run_estimate_mode(const Config &cfg)
 {
     const uint64_t n_est = estimate_n_for_target_sum(cfg.target_sum);
     const double approx = harmonic_approx(static_cast<double>(n_est));
+    const double error = approx - cfg.target_sum;
+
+    if (is_json_output(cfg))
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(15);
+        oss << "{";
+        oss << "\"backend\":\"estimate\"";
+        oss << ",\"target_sum\":" << cfg.target_sum;
+        oss << ",\"estimated_n\":" << n_est;
+        oss << ",\"approximate_h_n\":" << approx;
+        oss << ",\"error_vs_target\":" << error;
+        oss << std::scientific << ",\"target_n_sum_40\":" << TARGET_N_SUM_40;
+        oss << "}";
+        std::cout << oss.str() << std::endl;
+        return;
+    }
 
     std::cout << std::fixed << std::setprecision(15);
     std::cout << "Target sum H_n = " << cfg.target_sum << "\n";

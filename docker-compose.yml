@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: web/Dockerfile.api
+    ports:
+      - "8001:8001"
+    environment:
+      HARMONIC_BIN: /app/harmonic_series
+      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+    volumes:
+      - ./harmonic_series:/app/harmonic_series:ro
+      - harmonic-data:/app/web/api
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8001
+      API_URL: http://api:8001
+    depends_on:
+      - api
+
+volumes:
+  harmonic-data:

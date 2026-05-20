@@ -20,6 +20,11 @@ enum class Backend {
     Estimate,
 };
 
+enum class OutputFormat {
+    Text,
+    Json,
+};
+
 struct Config {
     Backend backend = Backend::Cpu;
     uint64_t chunk_size = 100000000U;
@@ -36,6 +41,9 @@ struct Config {
     uint64_t verify_window = 0;
     uint64_t validate_range = 0;
     int cuda_device = 0;
+    OutputFormat output_format = OutputFormat::Text;
+    bool progress_json = false;
+    bool list_gpus = false;
 
     // Distributed multi-machine
     bool distributed = false;
@@ -78,6 +86,10 @@ inline void print_usage(const char *prog)
         << "  --no-progress       Disable CPU progress thread\n"
         << "  --quiet             Suppress per-chunk output\n"
         << "  --fast-math         CUDA: enable --use_fast_math (rebuild FAST_MATH=1)\n"
+        << "  --format json|text  Output format (default: text)\n"
+        << "  --progress-json     Emit NDJSON progress on stderr\n"
+        << "  --list-gpus         List CUDA devices as JSON and exit\n"
+        << "  --global-n N        Bound summation to [1..N] (single-machine or distributed)\n"
         << "Distributed (multi-machine):\n"
         << "  --distributed R:N   This machine is rank R of N (e.g. 0:2)\n"
         << "  --global-n N        Total index n for H_n (all nodes same value)\n"
@@ -162,6 +174,35 @@ inline bool parse_args(int argc, char **argv, Config &cfg, std::vector<std::stri
         if (std::strcmp(argv[i], "--poc-report") == 0)
         {
             cfg.poc_report = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--progress-json") == 0)
+        {
+            cfg.progress_json = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--list-gpus") == 0)
+        {
+            cfg.list_gpus = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--format") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --format\n";
+                return false;
+            }
+            const std::string value = argv[++i];
+            if (value == "json")
+                cfg.output_format = OutputFormat::Json;
+            else if (value == "text")
+                cfg.output_format = OutputFormat::Text;
+            else
+            {
+                std::cerr << "Unknown --format (use json or text)\n";
+                return false;
+            }
             continue;
         }
         if (std::strcmp(argv[i], "--backend") == 0)
@@ -341,4 +382,13 @@ inline uint64_t resolve_work_unit(const Config &cfg)
     if (cfg.work_unit > 0)
         return cfg.work_unit;
     return 200000000U;
+}
+
+inline uint64_t resolve_global_end(const Config &cfg)
+{
+    if (cfg.global_n > 0)
+        return cfg.global_n;
+    const size_t workers = resolve_worker_count(cfg);
+    const uint64_t chunk_size = resolve_chunk_size(cfg);
+    return static_cast<uint64_t>(workers) * chunk_size;
 }

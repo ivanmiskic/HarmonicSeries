@@ -38,4 +38,10 @@ bool run_cuda(const Config &, RunStats &)
     return false;
 }
 
+bool list_cuda_gpus_json()
+{
+    std::cout << "[]" << std::endl;
+    return true;
+}
+
 } // namespace harmonic
